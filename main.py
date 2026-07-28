@@ -28,3 +28,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+from agent import ERAAI
+
+app = ERAAI()
+app.start()
