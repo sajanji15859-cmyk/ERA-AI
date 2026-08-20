@@ -109,9 +109,9 @@ class TestSecretsAndWarnings:
         assert any("api_key" in w and "secret" in w.lower() for w in config.warnings)
 
     def test_reserved_section_is_ignored_with_warning(self, tmp_path: Path) -> None:
-        write_config(tmp_path / "era-home" / "config.toml", "[tools]\nprovider = 'anthropic'\n")
+        write_config(tmp_path / "era-home" / "config.toml", "[agent]\nprovider = 'anthropic'\n")
         config = load_config(env={"ERA_HOME": str(tmp_path / "era-home")})
-        assert any("[tools]" in w and "reserved" in w for w in config.warnings)
+        assert any("[agent]" in w and "reserved" in w for w in config.warnings)
         assert config.debug is False  # value untouched
 
     def test_unknown_section_warns(self, tmp_path: Path) -> None:
@@ -194,3 +194,80 @@ class TestLLMSection:
         write_config(tmp_path / "era-home" / "config.toml", "[llm]\nmodel = 'm'\n")
         config = load_config(env={"ERA_HOME": str(tmp_path / "era-home")})
         assert not any("reserved" in w for w in config.warnings)
+
+
+class TestToolsSection:
+    """Phase 1B: the [tools.*] sections are honoured."""
+
+    def test_defaults(self) -> None:
+        config = load_config(env={"ERA_HOME": "/tmp/x"})
+        assert config.tools.files.sandbox_root == ""
+        assert config.tools.files.max_read_bytes == 100_000
+        assert config.tools.files.max_write_bytes == 100_000
+        assert config.tools.web.timeout_s == 15.0
+        assert config.tools.web.search == "duckduckgo"
+        assert config.tools.web.allow_private_networks is False
+        assert config.tools.shell.allowed_commands == ()
+        assert config.tools.shell.timeout_s == 10.0
+
+    def test_file_overrides(self, tmp_path: Path) -> None:
+        write_config(
+            tmp_path / "era-home" / "config.toml",
+            "[tools.files]\nsandbox_root = '/tmp/box'\nmax_read_bytes = 5000\n\n"
+            "[tools.shell]\nallowed_commands = ['echo', 'wc -l']\ntimeout_s = 3.0\n",
+        )
+        config = load_config(env={"ERA_HOME": str(tmp_path / "era-home")})
+        assert config.tools.files.sandbox_root == "/tmp/box"
+        assert config.tools.files.max_read_bytes == 5000
+        assert config.tools.shell.allowed_commands == ("echo", "wc -l")
+        assert config.tools.shell.timeout_s == 3.0
+        assert config.sources["tools.shell.allowed_commands"] == "file"
+
+    def test_env_overrides(self) -> None:
+        config = load_config(
+            env={
+                "ERA_HOME": "/tmp/x",
+                "ERA_SANDBOX_ROOT": "/tmp/env-box",
+                "ERA_SHELL_ALLOWED": "echo, date",
+            }
+        )
+        assert config.tools.files.sandbox_root == "/tmp/env-box"
+        assert config.tools.shell.allowed_commands == ("echo", "date")
+        assert config.sources["tools.files.sandbox_root"] == "env"
+
+    def test_unknown_tools_subsection_rejected(self, tmp_path: Path) -> None:
+        write_config(tmp_path / "era-home" / "config.toml", "[tools.teleport]\nenabled = true\n")
+        with pytest.raises(ConfigError, match=r"unknown config section \[tools\.teleport\]"):
+            load_config(env={"ERA_HOME": str(tmp_path / "era-home")})
+
+    def test_unknown_key_in_tools_section_rejected(self, tmp_path: Path) -> None:
+        write_config(tmp_path / "era-home" / "config.toml", "[tools.shell]\nallowed = ['echo']\n")
+        with pytest.raises(ConfigError, match=r"unknown config key tools\.shell\.allowed"):
+            load_config(env={"ERA_HOME": str(tmp_path / "era-home")})
+
+    @pytest.mark.parametrize(
+        ("section", "body"),
+        [
+            ("[tools.files]", "max_read_bytes = -1\n"),
+            ("[tools.web]", "timeout_s = 0\n"),
+            ("[tools.shell]", "allowed_commands = 'echo'\n"),
+            ("[tools.shell]", "timeout_s = 'fast'\n"),
+        ],
+    )
+    def test_invalid_values_rejected(self, tmp_path: Path, section: str, body: str) -> None:
+        write_config(tmp_path / "era-home" / "config.toml", f"{section}\n{body}")
+        with pytest.raises(ConfigError):
+            load_config(env={"ERA_HOME": str(tmp_path / "era-home")})
+
+    def test_searxng_requires_url(self, tmp_path: Path) -> None:
+        write_config(tmp_path / "era-home" / "config.toml", '[tools.web]\nsearch = "searxng"\n')
+        with pytest.raises(ConfigError, match="searxng_url"):
+            load_config(env={"ERA_HOME": str(tmp_path / "era-home")})
+
+    def test_searxng_with_url_ok(self, tmp_path: Path) -> None:
+        write_config(
+            tmp_path / "era-home" / "config.toml",
+            '[tools.web]\nsearch = "searxng"\nsearxng_url = "http://searx.example"\n',
+        )
+        config = load_config(env={"ERA_HOME": str(tmp_path / "era-home")})
+        assert config.tools.web.search == "searxng"

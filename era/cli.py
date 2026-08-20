@@ -203,6 +203,8 @@ def _cmd_doctor(config: Config, config_error: str | None = None) -> int:
 
     results.append(_check_llm())
 
+    results.extend(_check_tools())
+
     width = max(len(r.name) for r in results) + 2
     failed = False
     for result in results:
@@ -224,6 +226,38 @@ def _check_legacy() -> tuple[bool, str]:
     except Exception as exc:  # pragma: no cover - defensive
         return False, f"import error: {exc}"
     return True, "brain, memory, research, chat, agent (placeholder until Phase 1)"
+
+
+def _check_tools() -> list[_CheckResult]:
+    """Check tool-subsystem health: sandbox writability + shell allowlist size."""
+    from era.tools.registry import resolve_sandbox_root
+
+    try:
+        config = load_config()
+    except ConfigError as exc:
+        return [_CheckResult("tools", "fail", f"config invalid: {exc}")]
+    sandbox = resolve_sandbox_root(config)
+    try:
+        sandbox.mkdir(parents=True, exist_ok=True)
+        probe = sandbox / ".doctor-probe"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+        sandbox_check = _CheckResult("tools.sandbox", "ok", f"{sandbox} is writable")
+    except OSError as exc:
+        sandbox_check = _CheckResult("tools.sandbox", "fail", f"{sandbox} not writable: {exc}")
+    count = len(config.tools.shell.allowed_commands)
+    if count:
+        shell_check = _CheckResult(
+            "tools.shell",
+            "ok",
+            f"{count} allowed command prefix(es): "
+            f"{', '.join(config.tools.shell.allowed_commands[:5])}" + (" ..." if count > 5 else ""),
+        )
+    else:
+        shell_check = _CheckResult(
+            "tools.shell", "warn", "allowlist empty — shell.run disabled (safest default)"
+        )
+    return [sandbox_check, shell_check]
 
 
 def _check_llm() -> _CheckResult:
@@ -264,6 +298,17 @@ def _cmd_config_show(config: Config, config_error: str | None = None) -> int:
         ("llm.model", config.llm.model or "<not set>"),
         ("llm.base_url", config.llm.base_url or "<default>"),
         ("llm.timeout_s", f"{config.llm.timeout_s:g}"),
+        ("tools.files.sandbox_root", config.tools.files.sandbox_root or "<$ERA_HOME/sandbox>"),
+        ("tools.files.max_read_bytes", f"{config.tools.files.max_read_bytes:,}"),
+        ("tools.files.max_write_bytes", f"{config.tools.files.max_write_bytes:,}"),
+        ("tools.web.timeout_s", f"{config.tools.web.timeout_s:g}"),
+        ("tools.web.search", config.tools.web.search),
+        ("tools.web.allow_private_networks", str(config.tools.web.allow_private_networks)),
+        (
+            "tools.shell.allowed_commands",
+            ", ".join(config.tools.shell.allowed_commands) or "<none>",
+        ),
+        ("tools.shell.timeout_s", f"{config.tools.shell.timeout_s:g}"),
     ]
     for key, value in rows:
         source = config.sources.get(key, "default")

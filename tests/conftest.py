@@ -21,5 +21,7 @@ def isolated_era_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         "ERA_LLM_BASE_URL",
         "ERA_LLM_TIMEOUT",
         "ERA_LLM_API_KEY",
+        "ERA_SANDBOX_ROOT",
+        "ERA_SHELL_ALLOWED",
     ):
         monkeypatch.delenv(var, raising=False)

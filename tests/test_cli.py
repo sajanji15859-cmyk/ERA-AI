@@ -58,6 +58,21 @@ class TestDoctor:
         assert "[warn]" in out
         assert "api_key" in out
 
+    def test_doctor_reports_tools_checks(self, capsys: pytest.CaptureFixture[str]) -> None:
+        assert main(["doctor"]) == 0
+        out = capsys.readouterr().out
+        assert "tools.sandbox" in out
+        assert "tools.shell" in out
+        assert "disabled" in out  # shell allowlist empty by default
+
+    def test_doctor_reports_shell_allowlist(
+        self, tmp_path: Path, monkeypatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setenv("ERA_SHELL_ALLOWED", "echo, date")
+        assert main(["doctor"]) == 0
+        out = capsys.readouterr().out
+        assert "tools.shell" in out and "echo" in out
+
 
 class TestConfigCommands:
     def test_config_show(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -71,6 +86,10 @@ class TestConfigCommands:
             "llm.model",
             "llm.base_url",
             "llm.timeout_s",
+            "tools.files.sandbox_root",
+            "tools.web.timeout_s",
+            "tools.web.search",
+            "tools.shell.allowed_commands",
         ):
             assert key in out
 

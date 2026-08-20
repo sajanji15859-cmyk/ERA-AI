@@ -9,8 +9,10 @@ with an explicit permission and confirmation system for anything irreversible.
 > - **Phase 0 (foundation) ✅** — package, CLI, layered config, logging, CI-ready tooling.
 > - **Phase 1A (LLM adapter) ✅** — provider-agnostic LLM layer with offline mock and an
 >   OpenAI-compatible client (works with OpenAI, Groq, OpenRouter, Ollama, llama.cpp server).
-> - Next: 1B tools + registry → 1C permissions + audit → 1D memory → 1E execution loop →
->   1F `era agent` CLI. See the [roadmap](docs/ARCHITECTURE_AND_ROADMAP.md).
+> - **Phase 1B (tool system) ✅** — schema-validated tool registry with sandboxed file tools,
+>   read-only web tools (fetch/search), and allowlisted shell execution.
+> - Next: 1C permissions + audit → 1D memory → 1E execution loop → 1F `era agent` CLI.
+>   See the [roadmap](docs/ARCHITECTURE_AND_ROADMAP.md).
 
 ## Quick start
 
@@ -70,6 +72,39 @@ to_file = true
 `era doctor` and `era config show`. Supply secrets via environment variables only.
 (Later phases add an OS-keyring-backed vault.)
 
+## Tools (Phase 1B)
+
+All tools live behind one registry (`era.tools`) with JSON-schema argument validation,
+uniform `ToolResult` outputs, and per-tool risk levels (`READ_ONLY` / `LOW_RISK_WRITE` /
+`HIGH_RISK_WRITE`) ready for the Phase 1C permission engine.
+
+| Tool | Risk | Purpose |
+|---|---|---|
+| `fs.list` | READ_ONLY | List a sandbox directory |
+| `fs.read` | READ_ONLY | Read a sandbox text file (size-capped, UTF-8 only) |
+| `fs.write` | LOW_RISK_WRITE | Write a sandbox file (no-clobber default; needs `overwrite: true` to replace) |
+| `web.fetch` | READ_ONLY | Fetch a public page as readable text (http/https, text types only) |
+| `web.search` | READ_ONLY | Web search (keyless DuckDuckGo Lite by default; any SearXNG instance via config) |
+| `shell.run` | LOW_RISK_WRITE | Run an **allowlisted** command (argv only — no shell interpreter) |
+
+**Security boundaries**
+
+- **Files**: hard sandbox containment (`resolve()` + prefix check — `..`, absolute paths
+  and symlink escapes rejected); size caps on reads and writes; no delete tool.
+- **Web**: http/https only; private/loopback/link-local targets blocked (best-effort SSRF
+  guard, opt-in override for local testing); redirect re-validation; response/output caps;
+  no credentials or cookies are ever attached.
+- **Shell**: allowlist of argv-prefix templates (default **empty** = disabled); permanent
+  denylist on top (`rm`, `sudo`, `curl`, package managers, …); cwd pinned to the sandbox;
+  secret-looking environment variables scrubbed from child processes (incl.
+  `ERA_LLM_API_KEY`); timeout with process-group kill; output caps.
+
+```bash
+# Example: allow a couple of safe commands
+export ERA_SHELL_ALLOWED="echo, wc, python --version"
+era doctor   # shows the tools.sandbox / tools.shell health checks
+```
+
 ## Development
 
 ```bash
@@ -94,6 +129,13 @@ era/                  The package
 │   ├── mock.py       Offline scripted client for tests/demos (records prompts)
 │   ├── openai_compat.py  OpenAI-compatible chat-completions client (stdlib urllib)
 │   └── factory.py    create_client() from config + env; key via ERA_LLM_API_KEY only
+├── tools/            Phase 1B: schema-validated tool system
+│   ├── base.py       Tool ABC, ToolResult, RiskLevel, error taxonomy
+│   ├── schema.py     Minimal JSON-schema-subset validator (fails closed)
+│   ├── registry.py   ToolRegistry + build_default_registry() + sanitized call reports
+│   ├── files.py      fs.list / fs.read / fs.write — sandbox-contained
+│   ├── web.py        web.fetch / web.search — read-only, SSRF-guarded
+│   └── shell.py      shell.run — allowlisted argv execution, no shell interpreter
 └── legacy/           Original v0.1 placeholder modules, bug-fixed and
                       clearly marked; removed as real phases land
 tests/                pytest suite
@@ -139,7 +181,7 @@ phased development plan.
 | Phase | Scope | Status |
 |---|---|---|
 | 0 | Foundation: package, CLI, config, logging, CI | ✅ done |
-| 1 | Agent core: LLM layer, tools, execution loop, memory, permissions | next |
+| 1 | Agent core: LLM layer, tools, execution loop, memory, permissions | 🔄 1A–1B done |
 | 2 | Browser operator (Playwright/CDP) | planned |
 | 3 | Desktop operator (Windows/macOS/Linux) | planned |
 | 4 | Email, files, documents | planned |
