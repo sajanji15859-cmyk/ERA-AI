@@ -1,0 +1,88 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "era-ai"
+description = "ERA-AI — a personal autonomous computer-use agent (Phase 0: foundation)"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Sarafraj" }]
+keywords = ["ai", "agent", "automation", "assistant"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dynamic = ["version"]
+# Runtime dependencies: intentionally empty in Phase 0 — the foundation is
+# stdlib-only. Dependencies (LLM clients, etc.) arrive with Phase 1+.
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/sajanji15859-cmyk/ERA-AI"
+Documentation = "https://github.com/sajanji15859-cmyk/ERA-AI/blob/main/docs/ARCHITECTURE_AND_ROADMAP.md"
+
+[project.scripts]
+era = "era.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff==0.16.3",
+    "pre-commit>=3.7",
+]
+
+[tool.setuptools.packages.find]
+include = ["era*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "era.__version__" }
+
+# --------------------------------------------------------------------------
+# pytest
+# --------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "--strict-markers"
+
+# --------------------------------------------------------------------------
+# ruff
+# --------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["era", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort (import ordering)
+    "N",   # pep8-naming
+    "B",   # bugbear (likely bugs)
+    "C4",  # comprehensions
+    "SIM", # simplify
+    "UP",  # pyupgrade
+    "RUF", # ruff-specific
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Root facade shims re-export legacy names and import after the deprecation
+# warning on purpose.
+"agent.py" = ["E402"]
+"brain.py" = ["E402"]
+"chat.py" = ["E402"]
+"config.py" = ["E402"]
+"main.py" = ["E402"]
+"memory.py" = ["E402"]
+"research.py" = ["E402"]

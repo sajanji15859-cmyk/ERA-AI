@@ -1,18 +1,15 @@
-class Research:
+"""Deprecated facade — import ``era.legacy.research`` instead."""
 
-    def __init__(self):
-        self.database = {
-            "tesla": "Nikola Tesla was a brilliant inventor.",
-            "history": "History studies past human civilization.",
-            "science": "Science explains nature using evidence.",
-            "ai": "Artificial Intelligence enables machines to learn.",
-            "taj mahal": "The Taj Mahal was built by Shah Jahan."
-        }
+from __future__ import annotations
 
-    def search(self, topic):
-        topic = topic.lower()
+import warnings
 
-        if topic in self.database:
-            return self.database[topic]
+warnings.warn(
+    "research.py is deprecated; import era.legacy.research instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
-        return "Information not found."
+from era.legacy.research import Research
+
+__all__ = ["Research"]

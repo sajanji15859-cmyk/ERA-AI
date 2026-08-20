@@ -1,21 +1,13 @@
-class Brain:
-    def __init__(self):
-        self.name = "ERA AI Brain"
-        self.version = "0.1"
+"""Deprecated facade — import ``era.legacy.brain`` instead."""
 
-        self.skills = [
-            "Research",
-            "Memory",
-            "Reasoning",
-            "Science",
-            "History",
-            "AI"
-        ]
+from __future__ import annotations
 
-    def status(self):
-        print("🧠", self.name)
-        print("Version:", self.version)
-        print("\nSkills:")
+import warnings
 
-        for skill in self.skills:
-            print("✔", skill)
+warnings.warn(
+    "brain.py is deprecated; import era.legacy.brain instead.", DeprecationWarning, stacklevel=2
+)
+
+from era.legacy.brain import Brain
+
+__all__ = ["Brain"]

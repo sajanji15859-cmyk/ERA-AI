@@ -1,38 +1,17 @@
-from brain import Brain
-from memory import Memory
-from research import Research
+"""Deprecated facade — import ``era.legacy.agent`` instead.
 
+The original file defined the class ``ERAAI`` twice; the second definition
+shadowed the first. The fixed single class now lives in ``era.legacy.agent``.
+"""
 
-class ERAAI:
+from __future__ import annotations
 
-    def __init__(self):
-        self.brain = Brain()
-        self.memory = Memory()
-        self.research = Research()
+import warnings
 
-    def start(self):
-        print("🚀 ERA AI Started Successfully")
-        print("🧠 Brain Loaded")
-        print("💾 Memory Loaded")
-        print("📚 Research Loaded")
+warnings.warn(
+    "agent.py is deprecated; import era.legacy.agent instead.", DeprecationWarning, stacklevel=2
+)
 
-from chat import Chat
+from era.legacy.agent import ERAAI
 
-class ERAAI:
-
-    def __init__(self):
-        self.chat = Chat()
-
-    def start(self):
-        print("🤖 ERA AI Started")
-        print("Type 'exit' to quit")
-
-        while True:
-            user = input("You: ")
-
-            if user.lower() == "exit":
-                print("👋 Goodbye!")
-                break
-
-            reply = self.chat.reply(user)
-            print("ERA AI:", reply)
+__all__ = ["ERAAI"]

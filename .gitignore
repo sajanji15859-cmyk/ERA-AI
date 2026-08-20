@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+wheels/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# ERA-AI local runtime data (config with possible secrets, logs, memory)
+# ERA never stores secrets in git; local homes are ignored wholesale.
+.era/
+*.era-home/
+
+# Editors / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store

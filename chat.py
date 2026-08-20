@@ -1,23 +1,16 @@
-class Chat:
+"""Deprecated facade — import ``era.legacy.chat`` instead.
 
-    def reply(self, message):
+The word-boundary matching fix lives in ``era.legacy.chat``.
+"""
 
-        message = message.lower()
+from __future__ import annotations
 
-        if "tesla" in message:
-            return "⚡ Nikola Tesla एक महान आविष्कारक थे।"
+import warnings
 
-        elif "taj mahal" in message:
-            return "🕌 ताजमहल का निर्माण शाहजहाँ ने करवाया था।"
+warnings.warn(
+    "chat.py is deprecated; import era.legacy.chat instead.", DeprecationWarning, stacklevel=2
+)
 
-        elif "history" in message:
-            return "📚 इतिहास मानव सभ्यता का अध्ययन है।"
+from era.legacy.chat import Chat
 
-        elif "science" in message:
-            return "🔬 विज्ञान प्रमाण और प्रयोग पर आधारित है।"
-
-        elif "ai" in message:
-            return "🤖 Artificial Intelligence मशीनों को सीखने की क्षमता देता है।"
-
-        else:
-            return "❌ अभी मैं इस विषय को नहीं जानता।"
+__all__ = ["Chat"]

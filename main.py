@@ -1,35 +1,23 @@
-print("================================")
-print("        ERA AI v0.1")
-print("================================")
-print("System Starting...")
-print("Brain Loaded")
-print("Memory Loaded")
-print("Research Loaded")
-print("Logger Loaded")
-print("ERA AI Ready")
+"""Deprecated entry point — kept as a facade for the ``era`` CLI.
 
+Use ``era`` (or ``python -m era``) instead. The original version of this file
+launched the REPL at module level, which started a blocking ``input()`` loop
+even when ``main`` was merely imported. This facade is import-safe.
 
-from brain import Brain
-from memory import Memory
+This module will be removed once the package layout has settled (Phase 1+).
+"""
 
-def main():
-    print("🚀 ERA AI Starting...\n")
+from __future__ import annotations
 
-    brain = Brain()
-    brain.status()
+import warnings
 
-    print("\n-----------------\n")
+warnings.warn(
+    "Running ERA-AI via main.py is deprecated; use the `era` CLI or `python -m era`.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
-    memory = Memory()
-    memory.remember("सरफराज ERA AI बना रहा है")
-    memory.remember("ERA AI Professional Project")
-
-    memory.show()
+from era.cli import main
 
 if __name__ == "__main__":
-    main()
-
-from agent import ERAAI
-
-app = ERAAI()
-app.start()
+    raise SystemExit(main())

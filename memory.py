@@ -1,15 +1,13 @@
-class Memory:
-    def __init__(self):
-        self.notes = []
+"""Deprecated facade — import ``era.legacy.memory`` instead."""
 
-    def remember(self, text):
-        self.notes.append(text)
+from __future__ import annotations
 
-    def show(self):
-        print("📚 Memory")
+import warnings
 
-        if len(self.notes) == 0:
-            print("Memory Empty")
-        else:
-            for note in self.notes:
-                print("-", note)
+warnings.warn(
+    "memory.py is deprecated; import era.legacy.memory instead.", DeprecationWarning, stacklevel=2
+)
+
+from era.legacy.memory import Memory
+
+__all__ = ["Memory"]
