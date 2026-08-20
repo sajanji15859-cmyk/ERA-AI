@@ -5,11 +5,12 @@ research, productivity, reasoning, automation and daily digital work — ultimat
 operating its owner's laptop and Android phone through permitted interfaces,
 with an explicit permission and confirmation system for anything irreversible.
 
-> **Status: Phase 0 (Foundation) — complete.**
-> The project currently provides the package foundation: installable package,
-> `era` CLI, layered configuration, structured logging, lint/tests/CI.
-> No LLM, tools, autonomy or device control are included yet — those land in
-> later phases per the [roadmap](docs/ARCHITECTURE_AND_ROADMAP.md).
+> **Status: Phase 1 (Agent core) — in progress.**
+> - **Phase 0 (foundation) ✅** — package, CLI, layered config, logging, CI-ready tooling.
+> - **Phase 1A (LLM adapter) ✅** — provider-agnostic LLM layer with offline mock and an
+>   OpenAI-compatible client (works with OpenAI, Groq, OpenRouter, Ollama, llama.cpp server).
+> - Next: 1B tools + registry → 1C permissions + audit → 1D memory → 1E execution loop →
+>   1F `era agent` CLI. See the [roadmap](docs/ARCHITECTURE_AND_ROADMAP.md).
 
 ## Quick start
 
@@ -88,6 +89,11 @@ era/                  The package
 ├── cli.py            CLI entry point (`era`, `python -m era`)
 ├── config.py         Layered configuration (defaults < TOML < env)
 ├── logging.py        Structured logging setup (console + rotating file)
+├── llm/              Phase 1A: provider-agnostic LLM adapter layer
+│   ├── base.py       ChatMessage, LLMResponse, LLMClient protocol, error taxonomy
+│   ├── mock.py       Offline scripted client for tests/demos (records prompts)
+│   ├── openai_compat.py  OpenAI-compatible chat-completions client (stdlib urllib)
+│   └── factory.py    create_client() from config + env; key via ERA_LLM_API_KEY only
 └── legacy/           Original v0.1 placeholder modules, bug-fixed and
                       clearly marked; removed as real phases land
 tests/                pytest suite

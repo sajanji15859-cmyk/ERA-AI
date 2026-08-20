@@ -201,6 +201,8 @@ def _cmd_doctor(config: Config, config_error: str | None = None) -> int:
     legacy_ok, legacy_detail = _check_legacy()
     results.append(_CheckResult("legacy modules", "ok" if legacy_ok else "fail", legacy_detail))
 
+    results.append(_check_llm())
+
     width = max(len(r.name) for r in results) + 2
     failed = False
     for result in results:
@@ -224,6 +226,29 @@ def _check_legacy() -> tuple[bool, str]:
     return True, "brain, memory, research, chat, agent (placeholder until Phase 1)"
 
 
+def _check_llm() -> _CheckResult:
+    """Check the configured LLM provider (presence only — never key values)."""
+    import os
+
+    try:
+        settings = load_config().llm
+    except ConfigError as exc:
+        return _CheckResult("llm provider", "fail", f"config invalid: {exc}")
+    if settings.provider == "mock":
+        return _CheckResult("llm provider", "ok", "mock (offline)")
+    if settings.provider == "none":
+        return _CheckResult("llm provider", "warn", "not configured — agent features disabled")
+    if settings.provider == "openai":
+        has_key = bool(os.environ.get("ERA_LLM_API_KEY", ""))
+        detail = f"openai-compatible, model={settings.model or '<not set>'}"
+        if not has_key:
+            detail += " — ERA_LLM_API_KEY not set (fine for local endpoints only)"
+        return _CheckResult("llm provider", "warn" if not has_key else "ok", detail)
+    return _CheckResult(  # pragma: no cover - load_config validates providers
+        "llm provider", "fail", f"unknown provider {settings.provider!r}"
+    )
+
+
 def _cmd_config_show(config: Config, config_error: str | None = None) -> int:
     """Print each setting, its value and which layer supplied it."""
     print(f"config file: {config_path()}")
@@ -235,6 +260,10 @@ def _cmd_config_show(config: Config, config_error: str | None = None) -> int:
         ("debug", str(config.debug)),
         ("logging.level", config.logging.level),
         ("logging.to_file", str(config.logging.to_file)),
+        ("llm.provider", config.llm.provider),
+        ("llm.model", config.llm.model or "<not set>"),
+        ("llm.base_url", config.llm.base_url or "<default>"),
+        ("llm.timeout_s", f"{config.llm.timeout_s:g}"),
     ]
     for key, value in rows:
         source = config.sources.get(key, "default")

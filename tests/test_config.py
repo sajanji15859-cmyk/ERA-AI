@@ -104,17 +104,14 @@ class TestValidation:
 
 class TestSecretsAndWarnings:
     def test_secret_like_key_in_file_is_flagged(self, tmp_path: Path) -> None:
-        write_config(
-            tmp_path / "era-home" / "config.toml",
-            "[llm]\napi_key = 'super-secret'\nprovider = 'x'\n",
-        )
+        write_config(tmp_path / "era-home" / "config.toml", "[llm]\napi_key = 'super-secret'\n")
         config = load_config(env={"ERA_HOME": str(tmp_path / "era-home")})
         assert any("api_key" in w and "secret" in w.lower() for w in config.warnings)
 
     def test_reserved_section_is_ignored_with_warning(self, tmp_path: Path) -> None:
-        write_config(tmp_path / "era-home" / "config.toml", "[llm]\nprovider = 'anthropic'\n")
+        write_config(tmp_path / "era-home" / "config.toml", "[tools]\nprovider = 'anthropic'\n")
         config = load_config(env={"ERA_HOME": str(tmp_path / "era-home")})
-        assert any("[llm]" in w and "reserved" in w for w in config.warnings)
+        assert any("[tools]" in w and "reserved" in w for w in config.warnings)
         assert config.debug is False  # value untouched
 
     def test_unknown_section_warns(self, tmp_path: Path) -> None:
@@ -133,3 +130,67 @@ class TestEquality:
         a = Config(debug=True)
         b = Config(debug=True, sources={"debug": "env"}, warnings=("w",))
         assert a == b
+
+
+class TestLLMSection:
+    """Phase 1A: the [llm] section is now honoured (previously reserved)."""
+
+    def test_defaults(self) -> None:
+        config = load_config(env={"ERA_HOME": "/tmp/x"})
+        assert config.llm.provider == "none"
+        assert config.llm.model == ""
+        assert config.llm.base_url == ""
+        assert config.llm.timeout_s == 60.0
+
+    def test_file_overrides(self, tmp_path: Path) -> None:
+        write_config(
+            tmp_path / "era-home" / "config.toml",
+            "[llm]\nprovider = 'openai'\nmodel = 'm-1'\n"
+            "base_url = 'http://localhost:11434/v1/'\ntimeout_s = 12.5\n",
+        )
+        config = load_config(env={"ERA_HOME": str(tmp_path / "era-home")})
+        assert config.llm.provider == "openai"
+        assert config.llm.model == "m-1"
+        assert config.llm.base_url == "http://localhost:11434/v1"  # trailing / stripped
+        assert config.llm.timeout_s == 12.5
+        assert config.sources["llm.provider"] == "file"
+
+    def test_env_overrides(self) -> None:
+        config = load_config(
+            env={
+                "ERA_HOME": "/tmp/x",
+                "ERA_LLM_PROVIDER": "mock",
+                "ERA_LLM_MODEL": "env-model",
+                "ERA_LLM_BASE_URL": "http://env-host/v1",
+                "ERA_LLM_TIMEOUT": "5",
+            }
+        )
+        assert config.llm.provider == "mock"
+        assert config.llm.model == "env-model"
+        assert config.llm.base_url == "http://env-host/v1"
+        assert config.llm.timeout_s == 5.0
+        assert config.sources["llm.provider"] == "env"
+
+    def test_invalid_provider_in_file_raises(self, tmp_path: Path) -> None:
+        write_config(tmp_path / "era-home" / "config.toml", "[llm]\nprovider = 'skynet'\n")
+        with pytest.raises(ConfigError, match="invalid llm provider"):
+            load_config(env={"ERA_HOME": str(tmp_path / "era-home")})
+
+    def test_invalid_provider_in_env_raises(self) -> None:
+        with pytest.raises(ConfigError, match="ERA_LLM_PROVIDER"):
+            load_config(env={"ERA_HOME": "/tmp/x", "ERA_LLM_PROVIDER": "hal9000"})
+
+    @pytest.mark.parametrize("bad", ["0", "-3", "abc", "nan"])
+    def test_invalid_timeout_raises(self, bad: str) -> None:
+        with pytest.raises(ConfigError, match="ERA_LLM_TIMEOUT"):
+            load_config(env={"ERA_HOME": "/tmp/x", "ERA_LLM_TIMEOUT": bad})
+
+    def test_bad_timeout_in_file_raises(self, tmp_path: Path) -> None:
+        write_config(tmp_path / "era-home" / "config.toml", "[llm]\ntimeout_s = -1\n")
+        with pytest.raises(ConfigError, match=r"llm\.timeout_s"):
+            load_config(env={"ERA_HOME": str(tmp_path / "era-home")})
+
+    def test_llm_is_no_longer_reserved(self, tmp_path: Path) -> None:
+        write_config(tmp_path / "era-home" / "config.toml", "[llm]\nmodel = 'm'\n")
+        config = load_config(env={"ERA_HOME": str(tmp_path / "era-home")})
+        assert not any("reserved" in w for w in config.warnings)

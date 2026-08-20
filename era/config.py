@@ -9,8 +9,9 @@ Resolution order (later layers win):
 
 Security rule: **secrets never go in the config file.** Any secret-like key found in
 the file is flagged by :func:`load_config` (and by ``era doctor`` / ``era config show``);
-supply secrets via environment variables instead. Keys under reserved future-phase
-sections (e.g. ``[llm]``) are parsed but ignored until those phases are implemented.
+supply secrets via environment variables instead (e.g. ``ERA_LLM_API_KEY``). Keys under
+reserved future-phase sections (e.g. ``[tools]``) are parsed but ignored until those
+phases are implemented.
 
 Example ``~/.era/config.toml``::
 
@@ -21,8 +22,15 @@ Example ``~/.era/config.toml``::
     level = "info"      # debug | info | warning | error
     to_file = true
 
+    [llm]              # Phase 1A: LLM adapter layer
+    provider = "none"  # none | mock | openai
+    model = ""         # required when provider = "openai"
+    base_url = ""      # optional; any OpenAI-compatible endpoint
+    timeout_s = 60.0
+
 Environment overrides: ``ERA_HOME``, ``ERA_CONFIG``, ``ERA_DEBUG``, ``ERA_LOG_LEVEL``,
-``ERA_LOG_FILE``.
+``ERA_LOG_FILE``, ``ERA_LLM_PROVIDER``, ``ERA_LLM_MODEL``, ``ERA_LLM_BASE_URL``,
+``ERA_LLM_TIMEOUT`` — plus ``ERA_LLM_API_KEY`` (environment only; never a config key).
 """
 
 from __future__ import annotations
@@ -39,13 +47,16 @@ APP_NAME = "ERA AI"
 
 ENV_PREFIX = "ERA_"
 VALID_LOG_LEVELS = ("debug", "info", "warning", "error")
-RESERVED_SECTIONS = ("agent", "llm", "memory", "safety", "tools")
+#: LLM providers recognised by ``era.llm.factory.create_client``.
+VALID_LLM_PROVIDERS = frozenset({"none", "mock", "openai"})
+#: Sections parsed but not yet honoured by an implemented phase.
+RESERVED_SECTIONS = ("agent", "memory", "safety", "tools")
 
 _SECRET_KEY_RE = re.compile(
     r"api[_-]?key|secret|token|password|passphrase|credential", re.IGNORECASE
 )
 
-_KNOWN_TOP_LEVEL_SECTIONS = frozenset({"general", "logging", *RESERVED_SECTIONS})
+_KNOWN_TOP_LEVEL_SECTIONS = frozenset({"general", "logging", "llm", *RESERVED_SECTIONS})
 
 
 class ConfigError(ValueError):
@@ -61,6 +72,21 @@ class LoggingSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class LLMSettings:
+    """LLM provider settings (Phase 1A).
+
+    The API key is intentionally NOT part of this dataclass: it is read from
+    the ``ERA_LLM_API_KEY`` environment variable only, so it can never leak
+    through the Config object (config show, equality, logs).
+    """
+
+    provider: str = "none"  # none | mock | openai
+    model: str = ""
+    base_url: str = ""  # empty -> provider default (OpenAI)
+    timeout_s: float = 60.0
+
+
+@dataclass(frozen=True, slots=True)
 class Config:
     """Effective ERA-AI configuration.
 
@@ -72,6 +98,7 @@ class Config:
 
     debug: bool = False
     logging: LoggingSettings = LoggingSettings()
+    llm: LLMSettings = LLMSettings()
     sources: dict[str, str] = field(default_factory=dict, compare=False, repr=False)
     warnings: tuple[str, ...] = field(default=(), compare=False, repr=False)
 
@@ -100,10 +127,22 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
     path = config_path(env)
     file_data, warnings = _read_file(path)
 
-    sources = {"debug": "default", "logging.level": "default", "logging.to_file": "default"}
+    sources = {
+        "debug": "default",
+        "logging.level": "default",
+        "logging.to_file": "default",
+        "llm.provider": "default",
+        "llm.model": "default",
+        "llm.base_url": "default",
+        "llm.timeout_s": "default",
+    }
     debug = False
     level = "info"
     to_file = True
+    llm_provider = "none"
+    llm_model = ""
+    llm_base_url = ""
+    llm_timeout = 60.0
 
     # Layer 2: config file.
     general = file_data.get("general", {})
@@ -125,6 +164,30 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         to_file = _as_bool(log_section["to_file"], "logging.to_file")
         sources["logging.to_file"] = "file"
 
+    llm_section = file_data.get("llm", {})
+    if not isinstance(llm_section, dict):
+        msg = f"[llm] must be a table, got {type(llm_section).__name__}"
+        raise ConfigError(msg)
+    if "provider" in llm_section:
+        raw_provider = str(llm_section["provider"]).strip().lower()
+        if raw_provider not in VALID_LLM_PROVIDERS:
+            msg = (
+                f"invalid llm provider {raw_provider!r} in [llm] "
+                f"(valid: {', '.join(sorted(VALID_LLM_PROVIDERS))})"
+            )
+            raise ConfigError(msg)
+        llm_provider = raw_provider
+        sources["llm.provider"] = "file"
+    if "model" in llm_section:
+        llm_model = str(llm_section["model"]).strip()
+        sources["llm.model"] = "file"
+    if "base_url" in llm_section:
+        llm_base_url = str(llm_section["base_url"]).strip().rstrip("/")
+        sources["llm.base_url"] = "file"
+    if "timeout_s" in llm_section:
+        llm_timeout = _as_positive_float(llm_section["timeout_s"], "llm.timeout_s")
+        sources["llm.timeout_s"] = "file"
+
     # Layer 3: environment.
     if "ERA_DEBUG" in env:
         debug = _coerce_bool(env["ERA_DEBUG"], "ERA_DEBUG")
@@ -135,6 +198,25 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
     if "ERA_LOG_FILE" in env:
         to_file = _coerce_bool(env["ERA_LOG_FILE"], "ERA_LOG_FILE")
         sources["logging.to_file"] = "env"
+    if "ERA_LLM_PROVIDER" in env:
+        raw_provider = env["ERA_LLM_PROVIDER"].strip().lower()
+        if raw_provider not in VALID_LLM_PROVIDERS:
+            msg = (
+                f"invalid llm provider {raw_provider!r} in ERA_LLM_PROVIDER "
+                f"(valid: {', '.join(sorted(VALID_LLM_PROVIDERS))})"
+            )
+            raise ConfigError(msg)
+        llm_provider = raw_provider
+        sources["llm.provider"] = "env"
+    if "ERA_LLM_MODEL" in env:
+        llm_model = env["ERA_LLM_MODEL"].strip()
+        sources["llm.model"] = "env"
+    if "ERA_LLM_BASE_URL" in env:
+        llm_base_url = env["ERA_LLM_BASE_URL"].strip().rstrip("/")
+        sources["llm.base_url"] = "env"
+    if "ERA_LLM_TIMEOUT" in env:
+        llm_timeout = _coerce_positive_float(env["ERA_LLM_TIMEOUT"], "ERA_LLM_TIMEOUT")
+        sources["llm.timeout_s"] = "env"
 
     if level not in VALID_LOG_LEVELS:
         msg = f"invalid log level {level!r} (valid: {', '.join(VALID_LOG_LEVELS)})"
@@ -143,6 +225,12 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
     return Config(
         debug=debug,
         logging=LoggingSettings(level=level, to_file=to_file),
+        llm=LLMSettings(
+            provider=llm_provider,
+            model=llm_model,
+            base_url=llm_base_url,
+            timeout_s=llm_timeout,
+        ),
         sources=sources,
         warnings=tuple(warnings),
     )
@@ -205,3 +293,21 @@ def _coerce_bool(raw: str, where: str) -> bool:
         return False
     msg = f"{where} must be a boolean-like value, got {raw!r}"
     raise ConfigError(msg)
+
+
+def _as_positive_float(value: object, where: str) -> float:
+    """Coerce a config-file value to a positive float."""
+    try:
+        result = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError) as exc:
+        msg = f"{where} must be a number, got {value!r}"
+        raise ConfigError(msg) from exc
+    if result <= 0 or result != result:  # rejects <= 0 and NaN
+        msg = f"{where} must be a positive number, got {value!r}"
+        raise ConfigError(msg)
+    return result
+
+
+def _coerce_positive_float(raw: str, where: str) -> float:
+    """Coerce an environment-variable string to a positive float."""
+    return _as_positive_float(raw.strip(), where)

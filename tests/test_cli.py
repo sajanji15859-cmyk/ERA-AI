@@ -63,7 +63,15 @@ class TestConfigCommands:
     def test_config_show(self, capsys: pytest.CaptureFixture[str]) -> None:
         assert main(["config", "show"]) == 0
         out = capsys.readouterr().out
-        for key in ("debug", "logging.level", "logging.to_file"):
+        for key in (
+            "debug",
+            "logging.level",
+            "logging.to_file",
+            "llm.provider",
+            "llm.model",
+            "llm.base_url",
+            "llm.timeout_s",
+        ):
             assert key in out
 
     def test_config_show_defaults_without_action(self, capsys: pytest.CaptureFixture[str]) -> None:
