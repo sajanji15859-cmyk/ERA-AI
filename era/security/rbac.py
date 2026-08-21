@@ -40,6 +40,9 @@ class Permission:
     API_KEYS_MANAGE = "api_keys.manage"
     #: Phase 3A: start/continue/inspect agent runs.
     AGENT_RUN = "agent.run"
+    #: Phase 3C: manage provider secrets (store / rotate / revoke).
+    #: Admin-only — day-to-day ``user`` roles never touch the vault.
+    VAULT_MANAGE = "vault.manage"
 
 
 ALL_PERMISSIONS: frozenset[str] = frozenset({
@@ -53,6 +56,7 @@ ALL_PERMISSIONS: frozenset[str] = frozenset({
     Permission.USERS_MANAGE,
     Permission.API_KEYS_MANAGE,
     Permission.AGENT_RUN,
+    Permission.VAULT_MANAGE,
 })
 
 ROLE_PERMISSIONS: dict[Role, frozenset[str]] = {

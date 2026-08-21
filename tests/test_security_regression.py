@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from era.core.context import ExecutionContext
 from era.core.enums import Decision
 from era.core.result import ActionResult
@@ -179,3 +181,74 @@ def test_append_only_audit_integrity(tmp_path):
     repo = c.audit_service.audit_repo
     assert not hasattr(repo, "update")
     assert not hasattr(repo, "delete")
+
+# --- Phase 3C: credential vault regression locks ---------------------------------
+
+def test_vault_disabled_without_master_key_fails_closed(tmp_path):
+    """No ERA_VAULT_MASTER_KEY -> nothing stored, nothing resolved."""
+    c = make_container(tmp_path)
+    v = c.vault_service
+    assert v.enabled is False
+    from era.security.vault import VaultError
+    with pytest.raises(VaultError):
+        v.store_or_rotate_secret(domain="email", name="p", value="x", actor_id="u")
+    with pytest.raises(VaultError):
+        v.resolve_ref("vault:email/p")
+    with pytest.raises(VaultError):
+        v.revoke_secret(domain="email", name="p", actor_id="u")
+    # no vault rows exist and none can appear:
+    assert v.list_secrets() == []
+
+
+def test_vault_malformed_master_key_stays_disabled(tmp_path):
+    from era.config import Settings
+    from era.container import build_container
+    for bad in ("ab" * 16, "zz" * 32, "ab" * 32 + "cd", ""):
+        c = build_container(Settings(
+            database_url=f"sqlite:///{tmp_path}/bad_{bad[:2]}.db",
+            vault_master_key=bad))
+        assert c.vault_service.enabled is False, bad
+
+
+def test_vault_secret_never_in_audit_or_response(tmp_path):
+    """Lock the redaction boundary: the plaintext must be unfindable anywhere."""
+    from era.config import Settings
+    from era.container import build_container
+    c = build_container(Settings(
+        database_url=f"sqlite:///{tmp_path}/leak.db", vault_master_key="11" * 32))
+    needle = "LEAK-PROBE-9f8e7d6c"
+    c.vault_service.store_or_rotate_secret(domain="email", name="p",
+                                           value=needle, actor_id="u")
+    c.vault_service.resolve_ref("vault:email/p")
+    with transaction(c.session_factory) as session:
+        entries = c.audit_service.list(session, limit=1000)
+    for e in entries:
+        assert needle not in str(e.action_params)
+        assert needle not in (e.result or "")
+        assert needle not in str(e.meta)
+    # metadata APIs expose no value field:
+    row = c.vault_service.get_secret(domain="email", name="p")
+    assert not hasattr(row, "value")
+    assert "value" not in {f for f in dir(row) if not f.startswith("_")}
+
+
+def test_vault_user_role_cannot_manage(tmp_path):
+    """vault.manage is admin-only; the default user role is denied."""
+    from era.security.rbac import Permission, Role, role_has_permission
+    assert role_has_permission(Role.ADMIN, Permission.VAULT_MANAGE) is True
+    assert role_has_permission(Role.USER, Permission.VAULT_MANAGE) is False
+    assert role_has_permission("rogue", Permission.VAULT_MANAGE) is False
+
+
+def test_vault_revoked_secret_cannot_resolve(tmp_path):
+    from era.config import Settings
+    from era.container import build_container
+    from era.security.vault import VaultError
+    c = build_container(Settings(
+        database_url=f"sqlite:///{tmp_path}/revoked.db", vault_master_key="22" * 32))
+    c.vault_service.store_or_rotate_secret(domain="email", name="p",
+                                           value="x", actor_id="u")
+    c.vault_service.revoke_secret(domain="email", name="p", actor_id="u")
+    with pytest.raises(VaultError) as ei:
+        c.vault_service.resolve_ref("vault:email/p")
+    assert ei.value.code == "revoked"

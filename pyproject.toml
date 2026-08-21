@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "era-ai"
-version = "0.3.0"
-description = "ERA AI — autonomous agent (Phase 3A/3B: loop, tools, memory, verification, LLM, streaming)"
+version = "0.4.0"
+description = "ERA AI — autonomous agent (Phase 3A/3B/3C: loop, tools, memory, verification, LLM, streaming, credential vault)"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -14,6 +14,8 @@ dependencies = [
     "sqlalchemy>=2.0",
     "pydantic>=2.6",
     "pydantic-settings>=2.2",
+    # Phase 3C: credential vault (AES-256-GCM at rest)
+    "cryptography>=42",
 ]
 
 [project.optional-dependencies]

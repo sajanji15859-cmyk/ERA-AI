@@ -70,9 +70,27 @@ class Settings(BaseSettings):
     workspace_max_file_bytes: int = 1_048_576
     web_max_fetch_bytes: int = 2_097_152
     web_timeout_seconds: float = 15.0
-    web_user_agent: str = "ERA-Agent/0.3"
+    web_user_agent: str = "ERA-Agent/0.4"
 
-    app_version: str = "0.3.0"
+    # --- Phase 3C: credential vault + provider secrets -----------------------
+    #: Master key for the credential vault: 32 bytes as 64 hex chars or 44
+    #: base64 chars. Env-only — never commit a real key. Empty = the vault is
+    #: DISABLED (fail-closed: nothing stored, nothing resolved).
+    vault_master_key: str = ""
+
+    # --- Phase 3C: SMTP email provider (opt-in) ------------------------------
+    #: Empty host = provider not built (StubProvider keeps handling email.send).
+    email_smtp_host: str = ""
+    email_smtp_port: int = 587
+    #: Plain env value OR ``vault:<domain>/<name>`` reference.
+    email_smtp_user: str = ""
+    email_smtp_password: str = ""
+    email_smtp_from: str = ""
+    email_smtp_starttls: bool = False
+    email_smtp_ssl: bool = False
+    email_smtp_timeout_seconds: float = 10.0
+
+    app_version: str = "0.4.0"
 
     # Note: a missing/malformed policy is always DENY-all (hard fail-closed).
     # This is intentionally not configurable — weakening it is a footgun.

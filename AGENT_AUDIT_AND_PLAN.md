@@ -1,6 +1,6 @@
 # ERA-AI → Autonomous AI Agent: Full Audit & Transformation Roadmap
 
-*Status: audit complete + **Phase 3A (MVEA)** and **Phase 3B (LLM hardening + streaming chat API)** implemented in this session. Baseline before changes: `259 passed` on `main` (Phase 1C–1F + 2A). All existing tests still pass — current total: **398 passed** (259 pre-existing + 139 new).*
+*Status: audit complete + **Phase 3A (MVEA)**, **Phase 3B (LLM hardening + streaming chat API)** and **Phase 3C (Credential Vault + Provider Secrets)** implemented. Baseline before changes: `259 passed` on `main` (Phase 1C–1F + 2A). All existing tests still pass — current total: **444 passed** (259 pre-existing + 185 new).*
 
 ---
 
@@ -229,10 +229,11 @@ The agent adds **no new privilege surface** — every tool call flows through th
 | **Phase G — Web/browser** | Real web.search/fetch/download shipped; browser automation = FREE LIMITATION (later, Playwright/self-hosted) | ⬜ partial (next) |
 | **Phase 3B — LLM hardening + streaming chat** | SSE chat API + typed events, ToolCallBrain (native function calling, catalog/registry/RBAC-validated), prompt-injection defense + tests, in-loop RBAC domain guard, pricing/cost accounting, real SSE LLM streaming, 5 product bugs fixed (incl. duplicate-approval poisoning, missing `_settle_failure`, artifact loss on resume, 2A param caps blocking API approvals) | ✅ delivered (3B) |
 | **Phase H — Coding/file agent** | The welding-site goal works end-to-end; deeper code-exec sandbox + git integration next | ⬜ next |
-| **Phase I — Multi-agent, streaming UI, credential vault, Postgres, signing** | Multiple agents, SSE streaming chat, vault (2B), migrations, keyed audit signing, rate limiting | ⬜ future |
+| **Phase 3C — Credential vault + provider secrets (2B)** | AES-256-GCM vault (env-only master key, fail-closed), admin vault API, vault-backed secret resolution for providers, real SMTP email provider, LLM key via vault, `vault.manage` RBAC | ✅ delivered (3C) |
+| **Phase I — Multi-agent, streaming UI, Postgres, signing** | Multiple agents, SSE streaming chat, migrations, keyed audit signing, rate limiting (vault done in 3C) | ⬜ future |
 
 ### Next recommended phases (in order)
-1. **Phase 3C — Credential vault (2B)** so real providers (email/GitHub) can resolve secrets safely.
+1. ~~Phase 3C — Credential vault (2B)~~ — ✅ delivered.
 3. **Phase 3D — GitHub + code-exec sandbox provider** (user's "GitHub/code capability" ask) — `github.*` action types, PAT in vault, repo/file operations; subprocess code runner with allowlist, time/memory caps, no network by default.
 4. **Phase 3E — Web UI** (mobile-first chat dashboard over the same authenticated API).
 5. **Phase 3F — Scale:** Postgres, Alembic, keyed audit signing, rate limiting.
@@ -271,3 +272,54 @@ tests/test_agent_*.py          planner, tasks, budget, loop, workspace, web,
 Modified (additive only): `era/config.py` (agent settings), `era/security/rbac.py` (`agent.run` permission), `era/providers/stub.py` (optional `exclude`), `era/core/llm.py` (`LLMResponse.usage`), `era/repositories/sqlite.py` (agent-run + memory repos, audit `confirmation_id` filter), `era/models/__init__.py`, `era/main.py` (agent router when enabled), `.env.example`, `.gitignore` (`workspace/`), README (Phase 3A section).
 
 **Run it:** `python -m era.agent demo` → builds `workspace/welding_training_site/` and prints the run report. **API:** enable `ERA_AGENT_ENABLED=true`, start `uvicorn era.main:create_app --factory`, then `POST /v1/agent/runs {"goal": "मेरे लिए एक welding training website बनाओ"}`.
+
+## J) PHASE 3C DELIVERED — file inventory
+
+New modules:
+
+```
+era/security/vault.py          AES-256-GCM core: master-key parsing (hex/b64,
+                               malformed -> absent), vault:<domain>/<name> ref
+                               parsing, AAD-bound encrypt/decrypt, VaultError
+era/models/vault.py            VaultSecret ORM (ciphertext + nonce + metadata
+                               only; unique (domain,name); soft revocation)
+era/services/vault_service.py  VaultService (store/rotate/revoke/list/resolve,
+                               every op + every failure audited, fail-closed)
+                               + VaultRefResolver adapter for providers
+era/schemas/vault.py           strict request/response schemas (value never
+                               returned)
+era/api/routes/vault.py        POST /v1/vault/secrets (create-or-rotate),
+                               GET /v1/vault/secrets, POST .../revoke
+                               (admin-only: vault.manage; 503 when disabled)
+era/providers/email_smtp.py    real email.send via smtplib; credentials plain
+                               env or vault refs resolved at send time
+tests/test_vault.py            crypto (roundtrip, tamper, AAD, nonce), master
+                               key parsing, ref parsing, service, at-rest
+                               ciphertext check on the DB file
+tests/test_vault_api.py        RBAC (401/403/200), no value leakage, 422
+                               validation, 503 disabled
+tests/test_email_smtp.py       in-process SMTP sink: end-to-end send through
+                               the approval gate with vault-resolved creds,
+                               AUTH/TIMEOUT/UNAVAILABLE mapping, AUTH never
+                               retried, fail-closed paths, redaction locks
+tests/test_agent_llm_vault.py  LLM key via vault (build-time resolution,
+                               fail-closed on disabled/unknown ref, plain env
+                               key unchanged)
+tests/test_security_regression.py  +5 vault regression locks
+```
+
+Modified (additive only): `pyproject.toml` (`cryptography>=42`, v0.4.0),
+`era/config.py` (`vault_master_key` + `email_smtp_*`),
+`era/security/rbac.py` (`vault.manage`, admin-only),
+`era/models/__init__.py` (`VaultSecret`), `era/repositories/base.py` +
+`era/repositories/sqlite.py` (`VaultSecretRepo`), `era/container.py`
+(`vault_service` always built, disabled by default), `era/main.py` (vault
+router), `era/agent_runtime.py` (vault-aware LLM build + opt-in SMTP
+provider via `VaultRefResolver`), `era/providers/__init__.py`,
+`.env.example`, `README.md` (Phase 3C section).
+
+**Design invariants kept:** the secret boundary (core sees only `vault:`
+refs; providers own credential access), fail-closed defaults,
+audit-before-everything (vault ops + resolutions are audit rows), the
+default container is unchanged when no vault key / SMTP host is configured,
+and all 398 pre-existing tests pass unmodified (total now 444).

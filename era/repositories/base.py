@@ -19,6 +19,7 @@ from era.models import (
     PendingConfirmation,
     PolicyVersion,
     User,
+    VaultSecret,
 )
 
 
@@ -109,6 +110,21 @@ class ApiKeyRepo(Protocol):
     def list_by_user(self, session, user_id: str) -> list[ApiKey]: ...
 
     def list(self, session) -> list[ApiKey]: ...
+
+
+class VaultSecretRepo(Protocol):
+    """Credential vault storage (Phase 3C). Stores ciphertext only — the
+    plaintext value never exists as a column."""
+
+    def create(self, session, secret: VaultSecret) -> VaultSecret: ...
+
+    def get(self, session, domain: str, name: str) -> VaultSecret | None: ...
+
+    def get_by_id(self, session, secret_id: str) -> VaultSecret | None: ...
+
+    def list(self, session, domain: str | None = None) -> list[VaultSecret]: ...
+
+    def update(self, session, secret: VaultSecret) -> VaultSecret: ...
 
 
 class AgentRunRepo(Protocol):
