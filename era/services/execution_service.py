@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from era.core.action import Action
 from era.core.context import ExecutionContext
-from era.core.enums import Decision, Outcome
+from era.core.enums import Decision, Outcome, RiskLevel
 from era.core.result import ActionResult, ToolError
 from era.core.tool_registry import ActionCatalog, ToolRegistry
 from era.db import transaction
@@ -43,6 +43,13 @@ class ExecutionService:
         policy = self.policy_service.get_current()
         policy_version = policy.version if policy else 0
         risk_level, domain, provider_id, credential_ref = self._meta(action.action_type, ctx)
+
+        if self._forbidden(action.action_type):
+            self._record(action, ctx, RiskLevel.FORBIDDEN, Decision.DENY, Outcome.DENIED_BY_POLICY,
+                         policy_version, domain, provider_id, credential_ref,
+                         result="forbidden action")
+            return ExecutionResponse(status="denied", decision=Decision.DENY,
+                                     message="forbidden")
 
         try:
             decision = self.permission_engine.evaluate(action, policy)
@@ -77,6 +84,18 @@ class ExecutionService:
                 )
                 return ExecutionResponse(status="denied", decision=Decision.DENY,
                                          message="unknown confirmation")
+
+            if self._forbidden(confirmation.action_type) or self._forbidden(action.action_type):
+                self.confirmation_service.mark_status(session, confirmation, STATUS_DENIED)
+                self.audit_service.record(
+                    session, action=action, ctx=ctx,
+                    risk_level=RiskLevel.FORBIDDEN,
+                    decision=Decision.DENY, outcome=Outcome.DENIED_BY_POLICY,
+                    policy_version=confirmation.policy_version,
+                    confirmation_id=confirmation.id, result="forbidden action",
+                )
+                return ExecutionResponse(status="denied", decision=Decision.DENY,
+                                         message="forbidden")
 
             ok, reason = self.confirmation_service.validate(confirmation, action, challenge)
             if not ok:
@@ -134,6 +153,10 @@ class ExecutionService:
                                  message="denied by user")
 
     # -- internals ------------------------------------------------------------
+    def _forbidden(self, action_type: str) -> bool:
+        spec = self.catalog.get(action_type)
+        return spec is not None and spec.risk_level is RiskLevel.FORBIDDEN
+
     def _meta(self, action_type: str, ctx: ExecutionContext):
         spec = self.catalog.get(action_type)
         risk_level = spec.risk_level if spec else None

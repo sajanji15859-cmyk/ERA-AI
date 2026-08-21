@@ -11,7 +11,7 @@ from era.container import build_container
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
-    app = FastAPI(title="ERA AI — Phase 1C", version=settings.app_version)
+    app = FastAPI(title="ERA AI — Phase 1D", version=settings.app_version)
     app.state.container = build_container(settings)
 
     app.include_router(actions.router)
