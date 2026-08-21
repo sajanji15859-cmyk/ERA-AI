@@ -215,3 +215,121 @@ mutations. `StubProvider` and `MockLLMProvider` remain the only wired
 implementations. No retries/circuit-breakers, no async provider interface, no
 background workers, and no credential *storage* — providers continue to own
 credential resolution against their own secure stores in later phases.
+
+---
+
+## Phase 1F — Provider Execution Reliability Foundation
+
+Phase 1F adds the next *additive* reliability layer on top of Phase 1E — still
+**no real provider, no network calls, no credentials**. It makes the dispatch
+boundary resilient to transient provider failures without weakening any Phase
+1C/1D/1E security guarantee.
+
+### Retry foundation (`era/core/retry.py`)
+
+A provider-agnostic `RetryPolicy` + `with_retry()` loop applied to
+provider `execute` only:
+
+- **Only explicitly retryable failures are retried** — by default
+  `UNAVAILABLE` and `PROVIDER_ERROR`. `VALIDATION`, `AUTH`, `FORBIDDEN`,
+  `NOT_FOUND`, `CONFLICT`, `TIMEOUT`, `NOT_IMPLEMENTED` and `INTERNAL` are
+  never retried (a hard carve-out that configuration cannot override).
+- **Bounded** — `max_attempts` (default 3) is hard-capped at 10; the loop is a
+  plain `for`, so it can never run unboundedly.
+- **Configurable, deterministic backoff** — exponential (`base × factor^n`),
+  capped at `max_backoff`, no jitter, fully testable via injected clock/sleep.
+- **Deadline-aware** — respects `ExecutionContext.deadline`: a backoff that
+  would exceed the dispatch budget is not taken; the loop terminates with
+  `TIMEOUT` instead, so retrying can never bypass the Phase 1E deadline, and
+  the hard wall-clock timeout still bounds the whole loop (a `TIMEOUT` is
+  never retried).
+- **Quiet** — `with_retry` performs no logging; retry exhaustion re-raises the
+  original `ToolError` object with its original code, so no secrets can leak
+  through retry activity.
+
+### Circuit breaker (`era/core/circuit_breaker.py`)
+
+A small, deterministic per-provider breaker with `CLOSED` / `OPEN` /
+`HALF_OPEN` states:
+
+- Consecutive **eligible** failures (`UNAVAILABLE` / `PROVIDER_ERROR`,
+  default threshold 5) open the circuit.
+- `OPEN` blocks dispatch for `cooldown_seconds` (default 30s); then a
+  controlled `HALF_OPEN` probe is admitted. A successful probe closes the
+  circuit; a failed probe reopens it.
+- `AUTH`, `FORBIDDEN`, `VALIDATION`, `NOT_FOUND`, `CONFLICT`, `TIMEOUT`,
+  `NOT_IMPLEMENTED` and `INTERNAL` failures **never** affect breaker state —
+  authorization/policy failures can never be converted into circuit-breaker
+  behavior.
+- Breakers are isolated per provider id (`CircuitBreakerRegistry`), so one
+  provider's outage never blocks another.
+- The breaker is consulted only by the execution service **after** the
+  authorization record is durably committed and **outside** any DB
+  transaction; it can only block dispatch, never perform it.
+
+### Async provider foundation (`era/core/async_provider.py`)
+
+An additive extension point for asynchronous providers:
+
+- `AsyncToolProvider` protocol (`async validate` / `async execute`) mirroring
+  the synchronous `ToolProvider` SPI.
+- `to_async()` / `to_sync()` adapters: existing synchronous providers
+  (`StubProvider`) work from async code unchanged, and async providers can be
+  driven through the existing synchronous dispatch boundary. `ExecutionContext`
+  — including the Phase 1E deadline — is forwarded untouched.
+- `run_async_with_timeout()` — the async counterpart of `run_with_timeout()`
+  (overrun → `ToolError(TIMEOUT)`, never retried).
+- No real async provider ships; nothing here opens a socket or stores
+  credentials.
+
+### Execution integration (`era/services/execution_service.py`)
+
+Retry + circuit breaker live **only** at the provider dispatch boundary, in an
+order that preserves the security model:
+
+```
+AUTHORIZATION -> AUDIT AUTHORIZATION COMMITTED -> RELIABILITY / DISPATCH LAYER
+-> PROVIDER EXECUTE -> RECORD EXECUTED / FAILED / REJECTED
+```
+
+- The breaker gate and `with_retry` run strictly after the authorization record
+  is committed, outside any DB transaction.
+- `validate` remains single-attempt (a validation rejection is `REJECTED`, not
+  a retryable/health failure).
+- Error semantics stay on the existing `ProviderErrorCode` / `ToolError`
+  system: retry exhaustion → `FAILED` with the original code; circuit open →
+  deterministic `UNAVAILABLE`; unexpected exception → `INTERNAL`; `FORBIDDEN`
+  remains `DENY` and never dispatches (the breaker is never even consulted on
+  that path).
+
+### Configuration
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `ERA_PROVIDER_RETRY_MAX_ATTEMPTS` | `3` | max execute attempts per dispatch (cap 10) |
+| `ERA_PROVIDER_RETRY_BASE_BACKOFF_SECONDS` | `0.1` | backoff before the 2nd attempt |
+| `ERA_PROVIDER_RETRY_MAX_BACKOFF_SECONDS` | `2.0` | cap on a single backoff sleep |
+| `ERA_PROVIDER_RETRY_BACKOFF_FACTOR` | `2.0` | backoff growth between attempts |
+| `ERA_CIRCUIT_BREAKER_FAILURE_THRESHOLD` | `5` | consecutive eligible failures that open the circuit |
+| `ERA_CIRCUIT_BREAKER_COOLDOWN_SECONDS` | `30` | how long OPEN blocks dispatch |
+
+All defaults are safe and bounded; the retry cap is enforced in code, so a
+misconfiguration can never create an unbounded loop.
+
+### Security invariants (unchanged from Phase 1C/1D/1E)
+
+Fail-closed permission evaluation; `FORBIDDEN` is permanently `DENY`;
+authorization is durably recorded before provider dispatch (also under retry
+and circuit-open); confirmation cannot bypass policy; the audit log stays
+append-only with an intact hash chain; secrets remain redacted (including in
+the Phase 1F-generated messages); providers receive no raw credentials; no real
+network calls, API keys, OAuth, passwords or credential storage.
+
+### Explicitly NOT in Phase 1F
+
+**Still no real provider.** No Web, Email, WhatsApp, Booking, File/Photo or
+Android providers; no network/HTTP calls; no API keys / OAuth / passwords; no
+credential storage; no background workers; no persistent circuit state; no
+distributed/coordinated retry. `StubProvider` and `MockLLMProvider` remain the
+only wired implementations. Real providers (sync or async) land in later
+phases.

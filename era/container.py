@@ -8,7 +8,9 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker
 
 from era.config import Settings
+from era.core.circuit_breaker import CircuitBreakerConfig, CircuitBreakerRegistry
 from era.core.llm import LLMProvider
+from era.core.retry import RetryPolicy
 from era.core.tool_provider import ToolProvider
 from era.core.tool_registry import ActionCatalog, ToolRegistry
 from era.db import init_db, make_engine
@@ -69,11 +71,26 @@ def build_container(settings: Settings | None = None,
         audit_service=audit_service, settings=settings,
     )
     permission_engine = PermissionEngine(catalog=catalog)
+
+    # Phase 1F reliability layer: provider-agnostic retry policy + per-provider
+    # circuit breakers, both derived from settings with safe bounded defaults.
+    retry_policy = RetryPolicy(
+        max_attempts=settings.provider_retry_max_attempts,
+        base_backoff_seconds=settings.provider_retry_base_backoff_seconds,
+        max_backoff_seconds=settings.provider_retry_max_backoff_seconds,
+        backoff_factor=settings.provider_retry_backoff_factor,
+    )
+    circuit_breakers = CircuitBreakerRegistry(CircuitBreakerConfig(
+        failure_threshold=settings.circuit_breaker_failure_threshold,
+        cooldown_seconds=settings.circuit_breaker_cooldown_seconds,
+    ))
+
     execution_service = ExecutionService(
         session_factory=session_factory, catalog=catalog, registry=registry,
         permission_engine=permission_engine, audit_service=audit_service,
         confirmation_service=confirmation_service, policy_service=policy_service,
-        settings=settings,
+        settings=settings, retry_policy=retry_policy,
+        circuit_breakers=circuit_breakers,
     )
 
     policy_service.bootstrap()
