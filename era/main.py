@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from era.api.middleware import BodySizeLimitMiddleware, SecurityHeadersMiddleware
+from era.api.rate_limit import RateLimitMiddleware
 from era.api.routes import actions, admin, audit, confirmations, policy, providers, ui, vault
 from era.config import Settings
 from era.container import build_container
@@ -25,16 +26,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if settings.agent_enabled:
         from era.agent_runtime import build_agent_container
         container = build_agent_container(settings)
-        title = "ERA AI — Agent (Phase 3A/3B/3C/3D/3E)"
+        title = "ERA AI — Agent (Phase 3F)"
     else:
         container = build_container(settings)
-        title = "ERA AI — Phase 2A/3C"
+        title = "ERA AI — Phase 3F"
 
     app = FastAPI(title=title, version=settings.app_version)
     app.state.container = container
 
     # Input hardening: reject oversized request bodies before any handler.
     app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_body_bytes)
+    # Phase 3F: authenticated calls consume both per-key and per-IP buckets;
+    # unauthenticated calls are constrained by source IP.
+    app.add_middleware(
+        RateLimitMiddleware,
+        enabled=settings.rate_limit_enabled,
+        key_limit=settings.rate_limit_requests,
+        ip_limit=settings.rate_limit_ip_requests,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
     # Response hardening (Phase 3E): CSP + clickjacking/MIME-sniffing defenses
     # on every response, including the static dashboard and SSE streams.
     app.add_middleware(SecurityHeadersMiddleware)

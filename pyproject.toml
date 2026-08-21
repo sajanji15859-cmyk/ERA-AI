@@ -4,14 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "era-ai"
-version = "0.5.0"
-description = "ERA AI — autonomous agent (Phase 3A/3B/3C/3D: loop, tools, memory, verification, LLM, vault, GitHub, code-exec)"
+version = "0.6.0"
+description = "ERA AI — autonomous agent with secure tools, PostgreSQL scale, and signed audit"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.110",
     "uvicorn>=0.29",
     "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "psycopg[binary]>=3.1",
     "pydantic>=2.6",
     "pydantic-settings>=2.2",
     # Phase 3C: credential vault (AES-256-GCM at rest)
@@ -36,6 +38,9 @@ include = ["era*"]
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-q"
+markers = [
+    "postgres: requires ERA_TEST_POSTGRES_URL pointing to a disposable PostgreSQL database",
+]
 
 [tool.ruff]
 line-length = 100

@@ -1,3 +1,3 @@
-"""ERA AI — security and action-execution foundation (Phase 1C)."""
+"""ERA AI — secure autonomous agent platform."""
 
-__version__ = "0.1.0"
+__version__ = "0.6.0"

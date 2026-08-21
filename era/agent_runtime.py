@@ -26,7 +26,6 @@ from era.providers.github import GitHubProvider
 from era.providers.llm_openai import OpenAICompatLLMProvider
 from era.providers.web import WebProvider
 from era.providers.workspace import WorkspaceProvider
-from era.repositories.sqlite import SQLiteAgentRunRepo, SQLiteMemoryRepo
 from era.security.vault import VaultError, is_vault_ref
 from era.services.agent_service import AgentService
 from era.services.vault_service import VaultRefResolver
@@ -162,7 +161,7 @@ def build_agent_container(settings: Settings | None = None) -> Container:
     verifier = Verifier(workspace_root=workspace_root.resolve())
     long_term_memory = LongTermMemoryService(
         session_factory=container.session_factory,
-        memory_repo=SQLiteMemoryRepo(),
+        memory_repo=container.repositories.memory,
     )
 
     catalog_actions = sorted(s.action_type for s in container.catalog)
@@ -203,7 +202,7 @@ def build_agent_container(settings: Settings | None = None) -> Container:
         execution_service=container.execution_service,
         confirmation_service=container.confirmation_service,
         audit_service=container.audit_service,
-        agent_run_repo=SQLiteAgentRunRepo(),
+        agent_run_repo=container.repositories.agent_run,
         settings=settings,
         make_planner=make_planner,
         make_brain=make_brain,

@@ -4,8 +4,9 @@
 **Phase 3A (MVEA — Minimum Viable ERA Agent) delivered** on top of 2A: agent loop, planner,
 task manager, real Workspace/Web providers, verification, memory, approval-gated execution and
 budget controls — `359 passed`. **Phases 3B (streaming chat + LLM hardening), 3C (credential
-vault + SMTP), 3D (GitHub + code-exec sandbox) and 3E (web chat dashboard)** are delivered on
-top — `537 passed`. See [AGENT_AUDIT_AND_PLAN.md](AGENT_AUDIT_AND_PLAN.md) for the
+vault + SMTP), 3D (GitHub + code-exec sandbox), 3E (web chat dashboard), and **3F
+(PostgreSQL scale, Alembic, signed audit, rate limits, durable circuit state)** are delivered on
+top. See [AGENT_AUDIT_AND_PLAN.md](AGENT_AUDIT_AND_PLAN.md) for the
 full agent-transformation audit and roadmap (supersedes §D–§E for agent work).*
 
 ---
@@ -23,14 +24,14 @@ The Phase 1C–1F work built a **provider-agnostic security and execution founda
 | **Policy versioning** | Versioned, audited policy store; seeded with a safe fail-closed default (`SAFE/SENSITIVE=ALLOW`, `COMMUNICATION/MUTATING=CONFIRM`, `FINANCIAL/BOOKING/DESTRUCTIVE=CONFIRM_STRONG`, `FORBIDDEN=DENY`) | `era/services/policy.py`, `era/models/policy.py` |
 | **Fail-closed execution** | Two-phase model: authorization durably committed **before** provider dispatch; result recorded after; providers never hold a DB transaction; engine/service is the *only* route to execution | `era/services/execution_service.py` |
 | **Confirmation flow** | Single-use, TTL-bound, action-hash-bound approvals; `CONFIRM_STRONG` requires a challenge phrase; approve/deny/expire lifecycle | `era/services/confirmation_service.py` |
-| **Append-only audit log** | SHA-256 hash-chained, tamper-evident; DB-level `BEFORE UPDATE/DELETE` triggers; `verify` endpoint recomputes chain | `era/security/append_only.py`, `era/repositories/sqlite.py`, `era/api/routes/audit.py` |
+| **Append-only audit log** | SHA-256 hash-chained + optional HMAC/Ed25519 signatures; DB-level `BEFORE UPDATE/DELETE` triggers; `verify` checks links and signatures | `era/security/signing.py`, `era/repositories/{sqlite,postgres}.py`, `era/api/routes/audit.py` |
 | **Secret redaction** | Deep redaction of `secret_fields` + conservative key-name hints before audit/persistence | `era/security/redaction.py` |
 | **Provider SPI** | `ToolProvider` (sync) + `AsyncToolProvider` (async) protocols, bidirectional adapters, `ToolRegistry` with duplicate rejection and auto-adaptation | `era/core/tool_provider.py`, `era/core/async_provider.py`, `era/core/tool_registry.py` |
 | **Provider reliability** | Error taxonomy (`ProviderErrorCode`), bounded deadline-aware retry, per-provider circuit breaker, hard wall-clock timeouts (sync + async) | `era/core/result.py`, `era/core/retry.py`, `era/core/circuit_breaker.py`, `era/core/timeout.py` |
 | **Provider introspection** | Non-secret `ProviderInfo` metadata, registry listing, `/v1/providers` endpoints | `era/core/provider_info.py` |
 | **LLM interface (abstract)** | `LLMProvider`, `AgentInterface`, `ToolCall` structural contracts; enforced boundary that agents receive *only* the ExecutionService | `era/core/llm.py`, `tests/test_agent_interface.py` |
 | **REST API** | FastAPI app factory; evaluate/execute actions, confirmations, audit read+verify, policy read/update, provider listing | `era/api/*`, `era/main.py` |
-| **Storage abstraction** | Repository *protocols* (Audit/Confirmation/Policy) with SQLite impl; Postgres-swappable | `era/repositories/*` |
+| **Storage abstraction** | Complete repository protocols with URL-selected SQLite/PostgreSQL implementations and Alembic migrations | `era/repositories/*`, `era/migrations/*` |
 | **Config** | Pydantic-settings `Settings`, env-prefixed (`ERA_`), bounded safe defaults | `era/config.py`, `.env.example` |
 | **Tests** | **225 tests, all passing** (permission matrix, security regression, confirmation, dispatch boundary, fail-closed, provider contract, retry, circuit breaker, async, reliability integration, API) | `tests/` |
 
@@ -53,10 +54,10 @@ The Phase 1C–1F work built a **provider-agnostic security and execution founda
 - **UI** (web chat / dashboard) in the new architecture.
 - **Memory / long-term knowledge store** — new architecture has none (legacy `memory.py` is just an in-memory list).
 - **Task planning, background workers / job queue**, streaming responses.
-- **PostgreSQL implementation** (protocol only, SQLite is the only backend), and **DB migrations** (create_all only).
+- ~~**PostgreSQL implementation + DB migrations**~~ — delivered in Phase 3F.
 - **Input/schema validation** for action params (declared `param_schema` is unused).
-- **Rate limiting / abuse protection**, content-size guards.
-- **Cryptographic *signing* of audit entries** (SHA-256 chain only, not keyed signing).
+- ~~**Rate limiting / abuse protection**~~ — delivered in Phase 3F (content-size guards landed in 2A).
+- ~~**Cryptographic signing of audit entries**~~ — HMAC-SHA-256 + Ed25519 delivered in Phase 3F.
 
 ---
 
@@ -71,9 +72,9 @@ The Phase 1C–1F work built a **provider-agnostic security and execution founda
 7. **File/photo & device paths are arbitrary** — no path sandboxing / traversal guard for `fs.*` / `photo.*`.
 8. **Confirmation approval is not bound to the requesting actor/session** — anyone knowing a confirmation id can approve it.
 9. **No idempotency keys** on execute — API-level replay of a send/payment-like action could duplicate a side effect (retry layer is safe, but replay at the API is not guarded).
-10. **Audit chain is not cryptographically signed** — a DB compromise could rewrite the chain and genesis.
-11. **No migration framework** (`create_all` only) — needed before Postgres / schema evolution.
-12. **Reliability state (circuit breakers) is in-memory only** — resets on restart (documented, but a limitation for real traffic).
+10. ~~**Audit chain is not cryptographically signed**~~ — resolved in Phase 3F (HMAC/Ed25519).
+11. ~~**No migration framework**~~ — resolved in Phase 3F (Alembic upgrade/downgrade).
+12. ~~**Reliability state is in-memory only**~~ — resolved in Phase 3F (SQL-backed circuit state).
 13. **Dead legacy prototype files** remain in the repo root, excluded from linting — confusing and should be archived/removed.
 14. **No background workers / async job queue** — long-running or streaming provider work has no home.
 
@@ -94,7 +95,7 @@ Priority rule: **secure, identity-gated core first; external integrations only a
 | **2G** | **Device (Android) provider** | On-device automation: shell/app/UI/notification/location/contacts (separate capability boundary) | `era/providers/device.py` (or separate on-device agent); withdraw from stub | 2A–2F | High-risk domain: strong confirmation for shell/delete/payment; pairing-token security; location/contacts privacy | Device action tests, pairing tests, privacy tests | Agent acts on the user's device with strong gating |
 | **2H** | **Memory + task planning + background workers** | Long-term knowledge store, task/job queue, scheduled work | new `era/memory/`, `era/tasks/`, worker entrypoint; new repos/models | 2A–2D | Memory encrypted/redacted, retention policy, task permissions | Memory tests, task/queue tests, worker tests | Agent remembers across sessions and runs background work |
 | **2I** | **UI + streaming** | Web chat/dashboard frontend; streaming responses | new `era/web/` or `web/` frontend, streaming endpoints, SSE/WebSocket | 2A–2H | Same auth as API; no secret leakage to UI; CSP | UI E2E tests, streaming tests | A real personal-assistant interface |
-| **2J** | **Scale: PostgreSQL + migrations + signing** | Postgres backend, Alembic migrations, keyed audit signing, persistent circuit state | `era/repositories/postgres.py`, Alembic setup, `era/security/signing.py` | all | Signed audit chain, migration safety, key management | Postgres integration tests, migration tests, signing tests | Production-grade durability and scale |
+| **2J** | **Scale: PostgreSQL + migrations + signing — ✅ DELIVERED as Phase 3F** | Postgres backend, Alembic migrations, keyed audit signing, rate limits, persistent circuit state | `era/repositories/postgres.py`, Alembic setup, `era/security/signing.py` | all | Signed audit chain, migration safety, key management | Postgres integration tests, migration tests, signing tests | Production-grade durability and scale |
 
 ### Sequencing rationale
 - **2A first** — nothing real-world should be reachable without identity/auth; it also removes the dead prototype.

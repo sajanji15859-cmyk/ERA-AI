@@ -42,6 +42,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Protocol
 
 from era.core.result import ProviderErrorCode
 from era.core.retry import DEFAULT_RETRYABLE_CODES
@@ -93,26 +94,78 @@ class CircuitBreakerConfig:
         return code in self.trip_codes
 
 
-class CircuitBreaker:
-    """Per-provider circuit breaker. Thread-safety is not required: the
-    execution service drives dispatch synchronously and single-threaded."""
+@dataclass(frozen=True)
+class CircuitSnapshot:
+    """Storage-neutral durable state-machine snapshot."""
 
-    def __init__(self, config: CircuitBreakerConfig | None = None,
-                 *, now: Callable[[], float] = time.monotonic):
+    state: CircuitState
+    consecutive_failures: int
+    opened_at: float | None
+
+
+class CircuitStateStore(Protocol):
+    """Persistence boundary; SQL implementation lives in repositories."""
+
+    def load(self, provider_id: str) -> CircuitSnapshot | None: ...
+
+    def save(self, provider_id: str, snapshot: CircuitSnapshot) -> None: ...
+
+
+class CircuitBreaker:
+    """Per-provider circuit breaker, optionally backed by a durable store."""
+
+    def __init__(
+        self,
+        config: CircuitBreakerConfig | None = None,
+        *,
+        now: Callable[[], float] = time.monotonic,
+        provider_id: str | None = None,
+        store: CircuitStateStore | None = None,
+    ):
+        if store is not None and not provider_id:
+            raise ValueError("provider_id is required with a circuit state store")
         self.config = config or CircuitBreakerConfig()
         self._now = now
+        self._provider_id = provider_id
+        self._store = store
         self._state = CircuitState.CLOSED
         self._consecutive_failures = 0
         self._opened_at: float | None = None
+        self._refresh()
+
+    # -- persistence ---------------------------------------------------------
+    def _refresh(self) -> None:
+        if self._store is None or self._provider_id is None:
+            return
+        snapshot = self._store.load(self._provider_id)
+        if snapshot is None:
+            return
+        self._state = CircuitState(snapshot.state)
+        self._consecutive_failures = max(0, int(snapshot.consecutive_failures))
+        self._opened_at = snapshot.opened_at
+
+    def _persist(self) -> None:
+        if self._store is None or self._provider_id is None:
+            return
+        self._store.save(
+            self._provider_id,
+            CircuitSnapshot(
+                state=self._state,
+                consecutive_failures=self._consecutive_failures,
+                opened_at=self._opened_at,
+            ),
+        )
 
     # -- state ---------------------------------------------------------------
     @property
     def state(self) -> CircuitState:
+        self._refresh()
         return self._state
 
     @property
     def consecutive_failures(self) -> int:
         """Consecutive eligible failures in the current closed streak."""
+        self._refresh()
         return self._consecutive_failures
 
     # -- gate ----------------------------------------------------------------
@@ -123,6 +176,7 @@ class CircuitBreaker:
         the cooldown elapses, at which point the *next* request transitions to
         ``HALF_OPEN`` and is admitted as a probe.
         """
+        self._refresh()
         if self._state is CircuitState.CLOSED:
             return True
         if self._state is CircuitState.HALF_OPEN:
@@ -131,6 +185,7 @@ class CircuitBreaker:
         assert self._opened_at is not None
         if self._now() - self._opened_at >= self.config.cooldown_seconds:
             self._state = CircuitState.HALF_OPEN
+            self._persist()
             return True
         return False
 
@@ -138,11 +193,14 @@ class CircuitBreaker:
     def record_success(self) -> None:
         """Report a successful provider execute. Closes from HALF_OPEN and
         resets the failure streak; ignored while OPEN (no probe in flight)."""
+        self._refresh()
         if self._state is CircuitState.OPEN:
             return
         self._consecutive_failures = 0
+        self._opened_at = None
         if self._state is CircuitState.HALF_OPEN:
             self._state = CircuitState.CLOSED
+        self._persist()
 
     def record_failure(self, code: ProviderErrorCode | str) -> None:
         """Report a failed provider execute with its machine-readable code.
@@ -154,18 +212,21 @@ class CircuitBreaker:
         """
         if not self.config.is_eligible(code):
             return
+        self._refresh()
         if self._state is CircuitState.OPEN:
             return
         if self._state is CircuitState.HALF_OPEN:
             self._state = CircuitState.OPEN
             self._consecutive_failures = 1
             self._opened_at = self._now()
+            self._persist()
             return
         # CLOSED.
         self._consecutive_failures += 1
         if self._consecutive_failures >= self.config.failure_threshold:
             self._state = CircuitState.OPEN
             self._opened_at = self._now()
+        self._persist()
 
 
 class CircuitBreakerRegistry:
@@ -176,17 +237,28 @@ class CircuitBreakerRegistry:
     id at dispatch time, so breakers are created lazily and deterministically.
     """
 
-    def __init__(self, default_config: CircuitBreakerConfig | None = None,
-                 *, now: Callable[[], float] = time.monotonic):
+    def __init__(
+        self,
+        default_config: CircuitBreakerConfig | None = None,
+        *,
+        now: Callable[[], float] = time.monotonic,
+        store: CircuitStateStore | None = None,
+    ):
         self.default_config = default_config or CircuitBreakerConfig()
         self._now = now
+        self._store = store
         self._breakers: dict[str, CircuitBreaker] = {}
 
     def get(self, provider_id: str) -> CircuitBreaker:
         """Return (creating on first use) the breaker for ``provider_id``."""
         breaker = self._breakers.get(provider_id)
         if breaker is None:
-            breaker = CircuitBreaker(self.default_config, now=self._now)
+            breaker = CircuitBreaker(
+                self.default_config,
+                now=self._now,
+                provider_id=provider_id,
+                store=self._store,
+            )
             self._breakers[provider_id] = breaker
         return breaker
 

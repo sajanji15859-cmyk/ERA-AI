@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -20,14 +21,10 @@ from era.core.tool_registry import ActionCatalog, ToolRegistry
 from era.db import init_db, make_engine
 from era.providers import StubProvider
 from era.registry.actions import ACTION_CATALOG
-from era.repositories.sqlite import (
-    SQLiteApiKeyRepo,
-    SQLiteAuditRepo,
-    SQLiteConfirmationRepo,
-    SQLitePolicyRepo,
-    SQLiteUserRepo,
-    SQLiteVaultRepo,
-)
+from era.repositories.base import PolicyRepo
+from era.repositories.circuit_breaker import SQLCircuitStateStore
+from era.repositories.factory import RepositoryBundle, build_repositories
+from era.security.signing import build_audit_signer
 from era.security.vault import parse_master_key
 from era.services.audit_service import AuditService
 from era.services.auth_service import AuthService
@@ -50,7 +47,8 @@ class Container:
     audit_service: AuditService
     confirmation_service: ConfirmationService
     policy_service: PolicyService
-    policy_repo: SQLitePolicyRepo
+    policy_repo: PolicyRepo
+    repositories: RepositoryBundle
     auth_service: AuthService
     execution_service: ExecutionService
     #: Phase 3C: credential vault. Always built; ``enabled`` is False (and all
@@ -75,25 +73,35 @@ def build_container(settings: Settings | None = None,
     for provider in providers:
         registry.register(provider)
 
-    audit_repo = SQLiteAuditRepo(genesis_hash=settings.audit_genesis_hash)
-    confirmation_repo = SQLiteConfirmationRepo()
-    policy_repo = SQLitePolicyRepo()
-    user_repo = SQLiteUserRepo()
-    api_key_repo = SQLiteApiKeyRepo()
+    audit_signer = build_audit_signer(
+        settings.audit_signing_algorithm,
+        key=settings.audit_signing_key,
+        public_key=settings.audit_signing_public_key,
+        key_id=settings.audit_signing_key_id,
+    )
+    repositories = build_repositories(
+        settings.database_url,
+        genesis_hash=settings.audit_genesis_hash,
+        signer=audit_signer,
+    )
 
-    audit_service = AuditService(audit_repo=audit_repo, catalog=catalog, settings=settings)
+    audit_service = AuditService(
+        audit_repo=repositories.audit,
+        catalog=catalog,
+        settings=settings,
+    )
     confirmation_service = ConfirmationService(
-        confirmation_repo=confirmation_repo, catalog=catalog, settings=settings,
+        confirmation_repo=repositories.confirmation, catalog=catalog, settings=settings,
     )
     policy_service = PolicyService(
-        policy_repo=policy_repo, session_factory=session_factory,
+        policy_repo=repositories.policy, session_factory=session_factory,
         audit_service=audit_service, settings=settings,
     )
     # Phase 3C: credential vault (disabled + fail-closed until a master key
     # is configured via ERA_VAULT_MASTER_KEY).
     vault_service = VaultService(
         session_factory=session_factory,
-        vault_repo=SQLiteVaultRepo(),
+        vault_repo=repositories.vault,
         audit_service=audit_service,
         policy_service=policy_service,
         settings=settings,
@@ -102,8 +110,8 @@ def build_container(settings: Settings | None = None,
     permission_engine = PermissionEngine(catalog=catalog)
 
     auth_service = AuthService(
-        session_factory=session_factory, user_repo=user_repo,
-        api_key_repo=api_key_repo, catalog=catalog, settings=settings,
+        session_factory=session_factory, user_repo=repositories.user,
+        api_key_repo=repositories.api_key, catalog=catalog, settings=settings,
     )
 
     # Phase 1F reliability layer: provider-agnostic retry policy + per-provider
@@ -114,10 +122,21 @@ def build_container(settings: Settings | None = None,
         max_backoff_seconds=settings.provider_retry_max_backoff_seconds,
         backoff_factor=settings.provider_retry_backoff_factor,
     )
-    circuit_breakers = CircuitBreakerRegistry(CircuitBreakerConfig(
-        failure_threshold=settings.circuit_breaker_failure_threshold,
-        cooldown_seconds=settings.circuit_breaker_cooldown_seconds,
-    ))
+    circuit_store = None
+    if settings.circuit_breaker_persistent:
+        circuit_store = SQLCircuitStateStore(
+            session_factory,
+            repositories.circuit_breaker_state,
+        )
+    circuit_breakers = CircuitBreakerRegistry(
+        CircuitBreakerConfig(
+            failure_threshold=settings.circuit_breaker_failure_threshold,
+            cooldown_seconds=settings.circuit_breaker_cooldown_seconds,
+        ),
+        # Persisted timestamps must remain meaningful across process restarts.
+        now=time.time if circuit_store is not None else time.monotonic,
+        store=circuit_store,
+    )
 
     execution_service = ExecutionService(
         session_factory=session_factory, catalog=catalog, registry=registry,
@@ -141,7 +160,8 @@ def build_container(settings: Settings | None = None,
         audit_service=audit_service,
         confirmation_service=confirmation_service,
         policy_service=policy_service,
-        policy_repo=policy_repo,
+        policy_repo=repositories.policy,
+        repositories=repositories,
         auth_service=auth_service,
         execution_service=execution_service,
         vault_service=vault_service,
