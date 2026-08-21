@@ -7,10 +7,17 @@ Two-phase, fail-closed execution model:
   transaction. If this write fails, the action is NOT executed.
 * **Phase B (dispatch)** — the provider is invoked **outside** any database
   transaction (external network/device work must never hold a DB transaction),
-  bounded by a hard wall-clock timeout (Phase 1E).
+  bounded by a hard wall-clock timeout (Phase 1E). Phase 1F adds a reliability
+  layer here: a circuit-breaker gate and bounded, deadline-aware retries, both
+  strictly after the authorization record is committed.
 * **Phase C (result)** — the resulting EXECUTED/FAILED/REJECTED event is
   appended in a fresh transaction, carrying a stable
   :class:`~era.core.result.ProviderErrorCode` on failure.
+
+Dispatch order (never reordered):
+
+    AUTHORIZATION -> AUDIT AUTHORIZATION COMMITTED -> RELIABILITY / DISPATCH
+    LAYER -> PROVIDER EXECUTE -> RECORD EXECUTED / FAILED / REJECTED
 
 The engine and this service are the only route to execution; providers are never
 directly invokable by routes or the agent loop.
@@ -21,9 +28,11 @@ from __future__ import annotations
 import time
 
 from era.core.action import Action
+from era.core.circuit_breaker import CircuitBreakerConfig, CircuitBreakerRegistry
 from era.core.context import ExecutionContext
 from era.core.enums import Decision, Outcome, RiskLevel
 from era.core.result import ActionResult, ProviderErrorCode, ToolError
+from era.core.retry import RetryPolicy, with_retry
 from era.core.timeout import run_with_timeout
 from era.core.tool_registry import ActionCatalog, ToolRegistry
 from era.db import transaction
@@ -31,9 +40,29 @@ from era.models.confirmation import STATUS_DENIED, STATUS_EXPIRED, STATUS_USED
 from era.schemas.actions import ExecutionResponse
 
 
+def _retry_policy_from_settings(settings) -> RetryPolicy:
+    """Build the default retry policy from settings (safe bounded defaults)."""
+    return RetryPolicy(
+        max_attempts=int(getattr(settings, "provider_retry_max_attempts", 3)),
+        base_backoff_seconds=float(getattr(settings, "provider_retry_base_backoff_seconds", 0.1)),
+        max_backoff_seconds=float(getattr(settings, "provider_retry_max_backoff_seconds", 2.0)),
+        backoff_factor=float(getattr(settings, "provider_retry_backoff_factor", 2.0)),
+    )
+
+
+def _breaker_registry_from_settings(settings) -> CircuitBreakerRegistry:
+    """Build the default per-provider circuit-breaker registry from settings."""
+    return CircuitBreakerRegistry(CircuitBreakerConfig(
+        failure_threshold=int(getattr(settings, "circuit_breaker_failure_threshold", 5)),
+        cooldown_seconds=float(getattr(settings, "circuit_breaker_cooldown_seconds", 30.0)),
+    ))
+
+
 class ExecutionService:
     def __init__(self, *, session_factory, catalog: ActionCatalog, registry: ToolRegistry,
-                 permission_engine, audit_service, confirmation_service, policy_service, settings):
+                 permission_engine, audit_service, confirmation_service, policy_service, settings,
+                 retry_policy: RetryPolicy | None = None,
+                 circuit_breakers: CircuitBreakerRegistry | None = None):
         self.session_factory = session_factory
         self.catalog = catalog
         self.registry = registry
@@ -42,6 +71,9 @@ class ExecutionService:
         self.confirmation_service = confirmation_service
         self.policy_service = policy_service
         self.settings = settings
+        # Phase 1F reliability layer (provider-agnostic; defaults from settings).
+        self.retry_policy = retry_policy or _retry_policy_from_settings(settings)
+        self.circuit_breakers = circuit_breakers or _breaker_registry_from_settings(settings)
 
     # -- public entry points --------------------------------------------------
     def request(self, action: Action, ctx: ExecutionContext) -> ExecutionResponse:
@@ -240,38 +272,68 @@ class ExecutionService:
                                                             ProviderErrorCode | None]:
         budget = self._timeout_budget()
         dispatch_ctx = self._dispatch_context(ctx)
+        breaker = self.circuit_breakers.get(provider.id)
+
+        # Reliability gate (Phase 1F). Consulted ONLY after Phase A has durably
+        # committed the authorization record and outside any DB transaction, so
+        # it can never bypass the permission engine or audit-before-execute —
+        # it can only block dispatch. OPEN -> deterministic UNAVAILABLE failure.
+        if not breaker.allow_request():
+            return (Outcome.FAILED, False,
+                    f"provider {provider.id} circuit open: dispatch blocked",
+                    ProviderErrorCode.UNAVAILABLE)
 
         # validate -----------------------------------------------------------------
+        # Single attempt: a validation rejection is REJECTED (bad input), never
+        # retried and never fed to the circuit breaker (it is not a health
+        # signal). Preserve the provider's code when it already classifies the
+        # rejection, but never let a non-validation code masquerade as a
+        # successful validate.
         try:
             run_with_timeout(
                 lambda: provider.validate(action),
                 timeout_seconds=budget, provider_id=provider.id, stage="validate",
             )
         except ToolError as e:
-            # Validation rejection is REJECTED (bad input), not a provider failure.
-            # Preserve the provider's code when it already classifies the rejection,
-            # but never let a non-validation code masquerade as a successful validate.
             code = e.code if e.code in (
                 ProviderErrorCode.VALIDATION, ProviderErrorCode.FORBIDDEN,
                 ProviderErrorCode.NOT_FOUND, ProviderErrorCode.TIMEOUT,
             ) else ProviderErrorCode.VALIDATION
             return Outcome.REJECTED, False, str(e), code
 
-        # execute ------------------------------------------------------------------
+        # execute (retryable, deadline-aware) ----------------------------------------
+        # with_retry only retries explicitly retryable codes (UNAVAILABLE /
+        # PROVIDER_ERROR), respects the cooperative dispatch deadline and is
+        # additionally bounded by the same hard wall-clock timeout as Phase 1E
+        # — a timeout can never cause an unbounded retry loop.
         try:
             result = run_with_timeout(
-                lambda: provider.execute(action, dispatch_ctx),
+                lambda: with_retry(
+                    lambda: provider.execute(action, dispatch_ctx),
+                    policy=self.retry_policy,
+                    deadline=dispatch_ctx.deadline,
+                    provider_id=provider.id,
+                ),
                 timeout_seconds=budget, provider_id=provider.id, stage="execute",
             )
             if result.success:
+                breaker.record_success()
                 return Outcome.EXECUTED, True, result.summary, None
+            # Failure result (no exception): treat as PROVIDER_ERROR — eligible
+            # for the breaker, but not retried (no code to classify it on).
+            breaker.record_failure(ProviderErrorCode.PROVIDER_ERROR)
             return (Outcome.FAILED, False, result.summary or "provider returned failure",
                     ProviderErrorCode.PROVIDER_ERROR)
         except ToolError as e:
-            # Timeouts and provider-authored failures are FAILED.
-            outcome = Outcome.FAILED
-            return outcome, False, str(e), e.code
+            # Timeouts, retry exhaustion and provider-authored failures are FAILED.
+            # record_failure ignores ineligible codes (AUTH, FORBIDDEN, TIMEOUT,
+            # ...), so authorization/policy failures never trip the breaker.
+            breaker.record_failure(e.code)
+            return Outcome.FAILED, False, str(e), e.code
         except Exception as e:  # noqa: BLE001
+            # INTERNAL is never breaker-eligible, so this is a no-op for the
+            # breaker; kept explicit for readability.
+            breaker.record_failure(ProviderErrorCode.INTERNAL)
             return Outcome.FAILED, False, f"provider error: {type(e).__name__}", \
                 ProviderErrorCode.INTERNAL
 
