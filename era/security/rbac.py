@@ -84,6 +84,8 @@ ACTION_DOMAIN_ALLOWLIST: dict[Role, frozenset[str] | None] = {
         "whatsapp",
         "booking",
         "file",
+        "github",
+        "code",
     }),
 }
 

@@ -77,6 +77,22 @@ class ActionType(StrEnum):
     DEVICE_SETTINGS_CHANGE = "device.settings_change"
     DEVICE_PAYMENT = "device.payment"
 
+    # --- github (Phase 3D) ---------------------------------------------------
+    GITHUB_REPO_GET = "github.repo_get"
+    GITHUB_ISSUE_LIST = "github.issue_list"
+    GITHUB_ISSUE_GET = "github.issue_get"
+    GITHUB_ISSUE_CREATE = "github.issue_create"
+    GITHUB_ISSUE_COMMENT = "github.issue_comment"
+    GITHUB_PR_LIST = "github.pr_list"
+    GITHUB_PR_GET = "github.pr_get"
+    GITHUB_PR_CREATE = "github.pr_create"
+    GITHUB_FILE_GET = "github.file_get"
+    GITHUB_FILE_COMMIT = "github.file_commit"
+
+    # --- code execution (Phase 3D) --------------------------------------------
+    CODE_RUN = "code.run"
+    CODE_EXEC = "code.exec"
+
     # --- forbidden -----------------------------------------------------------
     SECRET_EXPORT = "secret.export"
     ACCOUNT_DELETE = "account.delete"
@@ -145,6 +161,22 @@ _SPECS: list[ActionSpec] = [
     _spec(ActionType.DEVICE_UNINSTALL_APP, RiskLevel.DESTRUCTIVE, "device", ("pairing_token",)),
     _spec(ActionType.DEVICE_SETTINGS_CHANGE, RiskLevel.DESTRUCTIVE, "device", ("pairing_token",)),
     _spec(ActionType.DEVICE_PAYMENT, RiskLevel.FINANCIAL, "device", ("pairing_token",)),
+
+    # github (Phase 3D)
+    _spec(ActionType.GITHUB_REPO_GET, RiskLevel.SAFE, "github", ("token",)),
+    _spec(ActionType.GITHUB_ISSUE_LIST, RiskLevel.SAFE, "github", ("token",)),
+    _spec(ActionType.GITHUB_ISSUE_GET, RiskLevel.SAFE, "github", ("token",)),
+    _spec(ActionType.GITHUB_ISSUE_CREATE, RiskLevel.MUTATING, "github", ("token",)),
+    _spec(ActionType.GITHUB_ISSUE_COMMENT, RiskLevel.MUTATING, "github", ("token",)),
+    _spec(ActionType.GITHUB_PR_LIST, RiskLevel.SAFE, "github", ("token",)),
+    _spec(ActionType.GITHUB_PR_GET, RiskLevel.SAFE, "github", ("token",)),
+    _spec(ActionType.GITHUB_PR_CREATE, RiskLevel.MUTATING, "github", ("token",)),
+    _spec(ActionType.GITHUB_FILE_GET, RiskLevel.SENSITIVE, "github", ("token",)),
+    _spec(ActionType.GITHUB_FILE_COMMIT, RiskLevel.MUTATING, "github", ("token",)),
+
+    # code execution (Phase 3D)
+    _spec(ActionType.CODE_RUN, RiskLevel.MUTATING, "code"),
+    _spec(ActionType.CODE_EXEC, RiskLevel.MUTATING, "code"),
 
     # forbidden
     _spec(ActionType.SECRET_EXPORT, RiskLevel.FORBIDDEN, "core"),

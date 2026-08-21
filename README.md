@@ -552,3 +552,33 @@ Regression locks: disabled vault fails closed everywhere; malformed master
 keys stay disabled; the plaintext is unfindable in the database file, audit
 log, API responses and error messages; `user` role is denied; revoked secrets
 can no longer resolve.
+
+---
+
+## Phase 3D: GitHub + Code-Exec Sandbox Providers (delivered)
+
+Phase 3D adds native **GitHub operations** and a **sandboxed Python code execution runner** to ERA-AI:
+
+### What it provides
+
+- **GitHub Provider** (`era/providers/github.py`):
+  - **Repositories & Issues**: `github.repo_get`, `github.issue_list`, `github.issue_get`, `github.issue_create`, `github.issue_comment`
+  - **Pull Requests**: `github.pr_list`, `github.pr_get`, `github.pr_create`
+  - **Files / Contents**: `github.file_get` (base64 decode), `github.file_commit` (base64 encode)
+  - **Vault-backed PAT**: Supports Personal Access Token from environment (`ERA_GITHUB_TOKEN`) or credential vault reference (`vault:github/token`).
+  - **Security & Redaction**: `token` is declared in `secret_fields` and never logged or leaked in results/errors/audit; input parameters and repository paths are strictly bounded against traversal.
+  - **Error taxonomy mapping**: 401/403 → `AUTH`, 404 → `NOT_FOUND`, 422 → `VALIDATION`, 429/secondary rate limit → `UNAVAILABLE`, 5xx/network → `UNAVAILABLE`, timeout → `TIMEOUT`.
+
+- **Code Execution Sandbox Provider** (`era/providers/code_exec.py`):
+  - **Actions**: `code.run` and `code.exec` (isolated Python runner).
+  - **Environment isolation**: Scrubs all host secrets (`ERA_*`, API keys, database URLs, master vault keys); only passes a strict whitelist of safe environment variables (`PATH`, `LANG`, `TMPDIR`, `USER`, etc.).
+  - **Workspace confinement**: Subprocess execution is confined to the agent workspace root.
+  - **Resource limits**: Wall-clock timeout (default 10s), CPU time caps, and virtual memory caps (via `resource` module on POSIX).
+  - **Output size truncation**: Captures and truncates stdout and stderr safely (default 64 KiB cap).
+
+### Test
+
+```bash
+pytest          # 522 passed across all suites (444 pre-existing + 78 Phase 3D)
+ruff check .    # clean
+```

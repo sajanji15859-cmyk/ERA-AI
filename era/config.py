@@ -90,7 +90,20 @@ class Settings(BaseSettings):
     email_smtp_ssl: bool = False
     email_smtp_timeout_seconds: float = 10.0
 
-    app_version: str = "0.4.0"
+    # --- Phase 3D: GitHub provider -------------------------------------------
+    github_api_base_url: str = "https://api.github.com"
+    github_token: str = ""  # env-only or vault:github/token
+    github_timeout_seconds: float = 15.0
+    github_user_agent: str = "ERA-Agent/0.4.0 (+https://github.com/sajanji15859-cmyk/ERA-AI)"
+    github_max_response_bytes: int = 1_048_576
+
+    # --- Phase 3D: Code execution provider ----------------------------------
+    code_exec_timeout_seconds: float = 10.0
+    code_exec_max_output_bytes: int = 65536
+    code_exec_memory_limit_mb: int = 256
+    code_exec_allow_network: bool = False
+
+    app_version: str = "0.5.0"
 
     # Note: a missing/malformed policy is always DENY-all (hard fail-closed).
     # This is intentionally not configurable — weakening it is a footgun.
