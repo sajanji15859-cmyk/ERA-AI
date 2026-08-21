@@ -52,10 +52,12 @@ class AuditService:
 
     # -- read (immutable) -----------------------------------------------------
     def list(self, session, *, limit: int = 100, offset: int = 0,
-             action_type: str | None = None, outcome: str | None = None) -> list[AuditLogEntry]:
+             action_type: str | None = None, outcome: str | None = None,
+             confirmation_id: str | None = None) -> list[AuditLogEntry]:
         return self.audit_repo.list(
             session, limit=limit, offset=offset,
             action_type=action_type, outcome=outcome,
+            confirmation_id=confirmation_id,
         )
 
     def get(self, session, entry_id: int) -> AuditLogEntry | None:

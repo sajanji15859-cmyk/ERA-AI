@@ -38,6 +38,8 @@ class Permission:
     ACTIONS_CONFIRM = "actions.confirm"
     USERS_MANAGE = "users.manage"
     API_KEYS_MANAGE = "api_keys.manage"
+    #: Phase 3A: start/continue/inspect agent runs.
+    AGENT_RUN = "agent.run"
 
 
 ALL_PERMISSIONS: frozenset[str] = frozenset({
@@ -50,6 +52,7 @@ ALL_PERMISSIONS: frozenset[str] = frozenset({
     Permission.ACTIONS_CONFIRM,
     Permission.USERS_MANAGE,
     Permission.API_KEYS_MANAGE,
+    Permission.AGENT_RUN,
 })
 
 ROLE_PERMISSIONS: dict[Role, frozenset[str]] = {
@@ -60,6 +63,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[str]] = {
         Permission.ACTIONS_EVALUATE,
         Permission.ACTIONS_EXECUTE,
         Permission.ACTIONS_CONFIRM,
+        Permission.AGENT_RUN,
     }),
 }
 

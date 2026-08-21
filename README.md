@@ -341,3 +341,69 @@ credential storage; no background workers; no persistent circuit state; no
 distributed/coordinated retry. `StubProvider` and `MockLLMProvider` remain the
 only wired implementations. Real providers (sync or async) land in later
 phases.
+
+---
+
+## Phase 3A — MVEA (Minimum Viable ERA Agent)
+
+Phase 3A turns the Phase 1C–2A execution foundation into a **real, safe,
+autonomous agent** — planning, task management, tool use, verification,
+bounded retry/replan and memory — without weakening any existing security
+invariant. Full audit + roadmap: [`AGENT_AUDIT_AND_PLAN.md`](AGENT_AUDIT_AND_PLAN.md).
+
+### What it provides
+
+- **Agent loop** — `PLAN → EXECUTE → OBSERVE → VERIFY → SUCCESS`, with
+  bounded retry (`fix → retry → verify`), one replan with repair tasks, and
+  hard budget caps (iterations, tool calls, LLM calls, tokens, wall-clock
+  timeout, USD cost cap). An endless loop is structurally impossible.
+- **Planner** — `RulePlanner` (offline, free, deterministic) + `LLMPlanner`
+  (model-generated JSON plan, strictly validated, offline fallback).
+- **Task manager** — `pending / running / completed / failed / retrying /
+  waiting_for_user / skipped`, dependency ordering, deadlock fail-closed.
+- **Real tools (ToolProviders)** — sandboxed `WorkspaceProvider` (`fs.*`,
+  `photo.*`: traversal/symlink guards, size caps) and `WebProvider`
+  (keyless DuckDuckGo search + `web.fetch`/`web.download` with SSRF guards:
+  scheme allowlist, private/loopback/link-local/reserved IP blocking,
+  redirect re-validation).
+- **Human approval** — MUTATING → CONFIRM, DESTRUCTIVE → CONFIRM_STRONG (all
+  unchanged defaults). The loop pauses (`waiting_for_user`) and resumes only
+  from audit-log-proven resolutions — the agent can never assume an approval.
+- **Verification** — action success, file existence/size, HTML structure +
+  keywords, internal link integrity; failures produce correction notes that
+  drive retries.
+- **Memory** — short-term per-run + long-term per-actor SQLite store.
+- **LLM (optional, free-tier ready)** — `OpenAICompatLLMProvider` works with
+  any OpenAI-compatible endpoint (OpenAI free tier / Groq / OpenRouter /
+  Ollama). No key → **offline deterministic mode**: the whole loop still runs
+  for real (FREE LIMITATION: open-ended content then comes from built-in
+  knowledge packs, not a model).
+- **API** — authenticated `POST /v1/agent/runs`, `GET /v1/agent/runs[/{id}]`,
+  `POST /v1/agent/runs/{id}/continue` (permission `agent.run`), enabled with
+  `ERA_AGENT_ENABLED=true`.
+
+### First real goal — works end-to-end
+
+```
+python -m era.agent demo --auto-approve
+```
+
+«मेरे लिए एक welding training website बनाओ» → plan (research → structure →
+6 pages → CSS/JS → verification) → tool execution through the permission/
+confirmation/audit gate → HTML + link verification → retry/replan → final
+site in `workspace/welding_training_site/`. Offline: **$0.00**, no API keys,
+no network required.
+
+### Test
+
+```bash
+pytest          # 259 (Phase 1C–2A) + 100 (Phase 3A) = 359 tests
+```
+
+### Explicitly NOT in Phase 3A
+
+Free-form model-driven tool selection beyond the planned action (planned for
+3B+), SSE streaming chat, a web UI, the credential vault, GitHub/code-exec
+providers, browser automation (FREE LIMITATION — needs a real browser),
+multi-agent orchestration, Postgres/migrations and keyed audit signing —
+these stay on the roadmap in `AGENT_AUDIT_AND_PLAN.md`.

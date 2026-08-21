@@ -11,7 +11,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from era.models import ApiKey, AuditLogEntry, PendingConfirmation, PolicyVersion, User
+from era.models import (
+    AgentRun,
+    ApiKey,
+    AuditLogEntry,
+    MemoryEntry,
+    PendingConfirmation,
+    PolicyVersion,
+    User,
+)
 
 
 @dataclass
@@ -49,7 +57,8 @@ class AuditRepo(Protocol):
     def append(self, session, entry: NewAuditEntry) -> AuditLogEntry: ...
 
     def list(self, session, *, limit: int = 100, offset: int = 0,
-             action_type: str | None = None, outcome: str | None = None) -> list[AuditLogEntry]: ...
+             action_type: str | None = None, outcome: str | None = None,
+             confirmation_id: str | None = None) -> list[AuditLogEntry]: ...
 
     def get(self, session, entry_id: int) -> AuditLogEntry | None: ...
 
@@ -100,3 +109,29 @@ class ApiKeyRepo(Protocol):
     def list_by_user(self, session, user_id: str) -> list[ApiKey]: ...
 
     def list(self, session) -> list[ApiKey]: ...
+
+
+class AgentRunRepo(Protocol):
+    """Agent run persistence (Phase 3A)."""
+
+    def create(self, session, run: AgentRun) -> AgentRun: ...
+
+    def get(self, session, run_id: str) -> AgentRun | None: ...
+
+    def update(self, session, run: AgentRun) -> AgentRun: ...
+
+    def list_by_actor(self, session, actor_id: str, *, limit: int = 50) -> list[AgentRun]: ...
+
+
+class MemoryRepo(Protocol):
+    """Long-term agent memory storage (Phase 3A)."""
+
+    def create(self, session, entry: MemoryEntry) -> MemoryEntry: ...
+
+    def get(self, session, actor_id: str, namespace: str, key: str) -> MemoryEntry | None: ...
+
+    def update(self, session, entry: MemoryEntry) -> MemoryEntry: ...
+
+    def list_namespace(self, session, actor_id: str, namespace: str) -> list[MemoryEntry]: ...
+
+    def delete(self, session, actor_id: str, namespace: str, key: str) -> bool: ...

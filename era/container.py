@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker
+
+if TYPE_CHECKING:  # pragma: no cover — import only for static analysis
+    from era.services.agent_service import AgentService
 
 from era.config import Settings
 from era.core.circuit_breaker import CircuitBreakerConfig, CircuitBreakerRegistry
@@ -46,6 +50,9 @@ class Container:
     policy_repo: SQLitePolicyRepo
     auth_service: AuthService
     execution_service: ExecutionService
+    #: Phase 3A: agent run lifecycle. ``None`` unless the agent runtime wired
+    #: it (``build_agent_container``) — the default container stays unchanged.
+    agent_service: AgentService | None = None
 
 
 def build_container(settings: Settings | None = None,

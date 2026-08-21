@@ -1,6 +1,10 @@
 # ERA-AI — Architecture Audit & Development Roadmap (V1 → Final Personal AI Agent)
 
-*Status: audit + **Phase 2A delivered**. Test baseline: `259 passed` on `main` (Phase 2A landed).*
+*Status: audit + **Phase 2A delivered**. Test baseline: `259 passed` on `main` (Phase 2A landed).
+**Phase 3A (MVEA — Minimum Viable ERA Agent) delivered** on top of 2A: agent loop, planner,
+task manager, real Workspace/Web providers, verification, memory, approval-gated execution and
+budget controls — `359 passed`. See [AGENT_AUDIT_AND_PLAN.md](AGENT_AUDIT_AND_PLAN.md) for the
+full agent-transformation audit and roadmap (supersedes §D–§E for agent work).*
 
 ---
 
