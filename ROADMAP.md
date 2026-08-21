@@ -4,9 +4,10 @@
 **Phase 3A (MVEA — Minimum Viable ERA Agent) delivered** on top of 2A: agent loop, planner,
 task manager, real Workspace/Web providers, verification, memory, approval-gated execution and
 budget controls — `359 passed`. **Phases 3B (streaming chat + LLM hardening), 3C (credential
-vault + SMTP), 3D (GitHub + code-exec sandbox), 3E (web chat dashboard), and **3F
-(PostgreSQL scale, Alembic, signed audit, rate limits, durable circuit state)** are delivered on
-top. See [AGENT_AUDIT_AND_PLAN.md](AGENT_AUDIT_AND_PLAN.md) for the
+vault + SMTP), 3D (GitHub + code-exec sandbox), 3E (web chat dashboard), **3F
+(PostgreSQL scale, Alembic, signed audit, rate limits, durable circuit state)**,
+and **3G (replay-safe idempotent execution + durable background job queue + legacy cleanup)** are
+delivered on top. See [AGENT_AUDIT_AND_PLAN.md](AGENT_AUDIT_AND_PLAN.md) for the
 full agent-transformation audit and roadmap (supersedes §D–§E for agent work).*
 
 ---
@@ -71,12 +72,12 @@ The Phase 1C–1F work built a **provider-agnostic security and execution founda
 6. **`web.fetch`/`web.download` have a recognized SSRF surface with no guard implemented** (no URL scheme/private-range/DNS-rebinding protection).
 7. **File/photo & device paths are arbitrary** — no path sandboxing / traversal guard for `fs.*` / `photo.*`.
 8. **Confirmation approval is not bound to the requesting actor/session** — anyone knowing a confirmation id can approve it.
-9. **No idempotency keys** on execute — API-level replay of a send/payment-like action could duplicate a side effect (retry layer is safe, but replay at the API is not guarded).
+9. ~~**No idempotency keys** on execute~~ — resolved in Phase 3G (idempotency keys on execute: replay returns the recorded result, never re-dispatches).
 10. ~~**Audit chain is not cryptographically signed**~~ — resolved in Phase 3F (HMAC/Ed25519).
 11. ~~**No migration framework**~~ — resolved in Phase 3F (Alembic upgrade/downgrade).
 12. ~~**Reliability state is in-memory only**~~ — resolved in Phase 3F (SQL-backed circuit state).
-13. **Dead legacy prototype files** remain in the repo root, excluded from linting — confusing and should be archived/removed.
-14. **No background workers / async job queue** — long-running or streaming provider work has no home.
+13. ~~**Dead legacy prototype files**~~ — resolved in Phase 3G (removed from the repo root; the ruff exclude that was also shadowing real `era/` modules by basename is gone).
+14. ~~**No background workers / async job queue**~~ — resolved in Phase 3G (`POST /v1/actions/execute` with `async=true` + durable `GET /v1/jobs`).
 
 ---
 

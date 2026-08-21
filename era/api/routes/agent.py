@@ -28,7 +28,6 @@ from fastapi.responses import StreamingResponse
 from era.agents.events import AgentEvent
 from era.api.deps import build_ctx, get_container, get_current_principal
 from era.container import Container
-from era.security.rbac import Permission
 from era.schemas.agent import (
     AgentEventListOut,
     AgentEventOut,
@@ -37,6 +36,7 @@ from era.schemas.agent import (
     AgentRunRequest,
     ChatRequest,
 )
+from era.security.rbac import Permission
 
 router = APIRouter()
 

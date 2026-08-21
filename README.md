@@ -704,7 +704,70 @@ isolated schema and do not alter existing schemas.
 ### Test
 
 ```bash
-pytest  # 546 passed, 1 live-Postgres test skipped unless URL is configured
+pytest  # 562 passed, 1 live-Postgres test skipped unless URL is configured
 ERA_TEST_POSTGRES_URL='postgresql://...' pytest -m postgres
 ruff check .
+```
+
+---
+
+## Phase 3G: Replay Safety & Background Execution (delivered)
+
+Phase 3G closes the last two production gaps from the audit: **replay safety**
+(idempotency keys) and **background workers** (an async job queue). It also
+removes the dead legacy prototype files from the repository root.
+
+### What it provides
+
+- **Idempotent execution** — `POST /v1/actions/execute` accepts an optional
+  `idempotency_key`. Replaying the same key with the same request returns the
+  originally recorded result **without** re-dispatching the provider, creating
+  a second confirmation, or appending audit rows. The same key with a
+  *different* request is a `409`; a key still in flight is a `409` so a
+  concurrent duplicate cannot race the first dispatch. Keys are SHA-256-hashed
+  and scoped to the actor, records expire after `ERA_IDEMPOTENCY_TTL_SECONDS`,
+  and an abandoned in-flight record (e.g. after a crash) is re-attempted after
+  `ERA_IDEMPOTENCY_PROCESSING_TTL_SECONDS`. The CONFIRM_STRONG challenge phrase
+  is never persisted — a replay returns the same `confirmation_id` without
+  re-issuing the one-time phrase.
+
+- **Background job queue** — the same endpoint with `"async": true` returns
+  `202` with a `job_id` immediately and executes the action on a bounded
+  in-process worker pool, through the **same** permission → confirmation →
+  audit → reliability gate. Poll `GET /v1/jobs/{job_id}` (or list with
+  `GET /v1/jobs`; both require the `jobs.read` permission and are actor-scoped).
+  Job rows store only *redacted* params; the raw action lives in memory, so a
+  crash never persists secret material. Jobs left `queued`/`running` by a
+  crashed process are failed on the next startup (never silently resumed), and
+  an async re-submission with the same `idempotency_key` returns the same job.
+
+- **Legacy prototype cleanup** — the dead top-level prototypes (`agent.py`,
+  `brain.py`, `chat.py`, `config.py`, `main.py`, `memory.py`, `research.py`)
+  are removed, and the ruff `exclude` list (which was accidentally matching
+  real `era/` modules by basename) is gone — surfacing and fixing six hidden
+  lint issues in the real modules.
+
+### Try it
+
+```bash
+python -m era.cli create-admin   # then create a user + key
+uvicorn era.main:create_app --factory
+
+# Replay-safe execute (same key -> same result, no double side effect)
+curl -X POST localhost:8000/v1/actions/execute -H "Authorization: Bearer $KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"action_type":"web.search","params":{"q":"era"},"idempotency_key":"op-1"}'
+
+# Background execution
+curl -X POST localhost:8000/v1/actions/execute -H "Authorization: Bearer $KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"action_type":"web.search","params":{"q":"era"},"async":true}'
+curl localhost:8000/v1/jobs/<job_id> -H "Authorization: Bearer $KEY"
+```
+
+### Test
+
+```bash
+pytest          # 562 passed (546 Phase 1C–3F + 16 Phase 3G), 1 live-Postgres skipped
+ruff check .    # clean
 ```

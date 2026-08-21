@@ -20,6 +20,8 @@ from era.repositories.sqlite import (
     SQLiteApiKeyRepo,
     SQLiteAuditRepo,
     SQLiteConfirmationRepo,
+    SQLiteIdempotencyRepo,
+    SQLiteJobRepo,
     SQLiteMemoryRepo,
     SQLitePolicyRepo,
     SQLiteUserRepo,
@@ -81,6 +83,14 @@ class PostgresAgentRunRepo(SQLiteAgentRunRepo):
 
 class PostgresMemoryRepo(SQLiteMemoryRepo):
     """PostgreSQL long-term memory repository."""
+
+
+class PostgresIdempotencyRepo(SQLiteIdempotencyRepo):
+    """PostgreSQL replay-dedup storage (Phase 3G)."""
+
+
+class PostgresJobRepo(SQLiteJobRepo):
+    """PostgreSQL background job storage (Phase 3G)."""
 
 
 class PostgresCircuitBreakerStateRepo:

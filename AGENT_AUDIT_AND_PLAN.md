@@ -232,13 +232,16 @@ The agent adds **no new privilege surface** — every tool call flows through th
 | **Phase 3C — Credential vault + provider secrets (2B)** | AES-256-GCM vault (env-only master key, fail-closed), admin vault API, vault-backed secret resolution for providers, real SMTP email provider, LLM key via vault, `vault.manage` RBAC | ✅ delivered (3C) |
 | **Phase 3D — GitHub + code-exec sandbox providers** | `github.*` action types, PAT in vault, repo/issue/PR/file operations; isolated subprocess code runner with safe env scrub, time/memory caps | ✅ delivered (3D) |
 | **Phase 3E — Web UI / chat dashboard** | Mobile-first static dashboard served by the app at `/` over the same authenticated API: login (key → `/v1/me`), fetch-based SSE chat, typed-event timeline, in-UI approve/deny + challenge + continue, runs sidebar with event replay, CSP/clickjacking/MIME-sniffing response hardening | ✅ delivered (3E) |
-| **Phase I — Multi-agent, streaming UI, Postgres, signing** | Multiple agents, migrations, keyed audit signing, rate limiting (vault done in 3C; SSE chat + web UI done in 3B/3E) | ⬜ future |
+| **Phase 3G — Replay safety + background jobs** | Idempotency keys on execute (replay → recorded result, never re-dispatch; same-key/different-request → 409), durable async job queue (`async=true` + `GET /v1/jobs`), legacy prototype cleanup | ✅ delivered (3G) |
+| **Phase I — Multi-agent, streaming UI, Postgres, signing** | Multiple agents, migrations, keyed audit signing, rate limiting (vault done in 3C; SSE chat + web UI done in 3B/3E; Postgres/signing/rate limits done in 3F) | ⬜ future |
 
 ### Next recommended phases (in order)
 1. ~~Phase 3C — Credential vault (2B)~~ — ✅ delivered.
 2. ~~Phase 3D — GitHub + code-exec sandbox provider~~ — ✅ delivered.
 3. ~~Phase 3E — Web UI~~ — ✅ delivered (mobile-first chat dashboard over the same authenticated API).
-4. **Phase 3F — Scale:** Postgres, Alembic, keyed audit signing, rate limiting.
+4. ~~Phase 3F — Scale: Postgres, Alembic, keyed audit signing, rate limiting~~ — ✅ delivered.
+5. ~~Phase 3G — Replay safety + background jobs~~ — ✅ delivered.
+6. **Phase 3H — remaining roadmap:** multi-agent orchestration, WhatsApp/Booking/Device providers, browser automation, image generation — each independently shippable.
 
 ### Testing strategy per phase (uniform)
 - New behavior: unit tests per component (planner, task manager, budget, verifier, memory).
@@ -359,3 +362,57 @@ Modified (additive only):
 * `era/providers/__init__.py`: exported `GitHubProvider` and `CodeExecProvider`.
 * `tests/test_permission_matrix.py`: catalog consistency checks for GitHub and Code actions.
 * `.env.example`, `pyproject.toml`, `README.md`.
+
+## L) PHASE 3G DELIVERED — file inventory
+
+Phase 3G closes the last two production gaps from the audit: **replay safety**
+(idempotency keys on execute) and **background workers** (a durable async job
+queue), plus the long-standing **legacy prototype cleanup**.
+
+New modules:
+
+```
+era/models/idempotency.py       IdempotencyRecord ORM (actor+key_hash unique,
+                                request_hash, status, stored response, TTL)
+era/models/job.py               Job ORM (durable async execution: redacted
+                                params only, actor-scoped, idempotency-key dedupe)
+era/services/idempotency.py     IdempotencyService (replay/conflict/in-flight/
+                                stale/expiry semantics; SHA-256 key+request
+                                hashes; challenge never persisted)
+era/services/jobs.py            JobService (bounded worker pool, idempotent
+                                submit, restart recovery, actor-scoped reads)
+era/schemas/jobs.py             JobOut / JobListOut
+era/api/routes/jobs.py          GET /v1/jobs, GET /v1/jobs/{id} (jobs.read)
+era/migrations/versions/0003_phase_3g_reliability.py
+tests/test_idempotency.py       8 tests (replay, conflict, actor-scoping,
+                                in-flight reject, stale re-attempt, confirmation
+                                reuse, audit-row dedupe, 409 on param change)
+tests/test_job_queue.py         8 tests (async completion, idempotent submit,
+                                conflict, actor-scoping, auth, confirmation
+                                gate, restart recovery, param redaction)
+```
+
+Modified (additive only): `era/config.py` (idempotency/job settings, v0.7.0),
+`era/models/__init__.py`, `era/repositories/{base,sqlite,postgres,factory}.py`
+(idempotency + job repos), `era/container.py` (idempotency + job services,
+startup recovery), `era/main.py` (jobs router + shutdown lifespan),
+`era/api/routes/actions.py` (idempotency_key + async on execute),
+`era/schemas/actions.py` (`idempotency_key`, `async`), `era/security/rbac.py`
+(`jobs.read`), `pyproject.toml` (v0.7.0; ruff exclude removed), `.env.example`,
+`README.md`, `ROADMAP.md`.
+
+Removed: the dead legacy prototype files at the repo root (`agent.py`,
+`brain.py`, `chat.py`, `config.py`, `main.py`, `memory.py`, `research.py`).
+The old ruff `exclude` list was also matching real `era/` modules by basename
+(e.g. `brain.py` → `era/agents/brain.py`); removing it surfaced and fixed six
+previously-hidden lint issues in real modules.
+
+**Design invariants kept:** every async job and every replayed execute still
+flows through the unchanged permission engine → confirmation → audit →
+reliability gate; the secret boundary is preserved (job rows persist only
+redacted params, credentials stay opaque refs); fail-closed everywhere
+(in-flight/conflict → 409, interrupted jobs → failed, unknown → denied);
+the default container and all 546 pre-existing tests are unchanged.
+
+**Test totals:** 546 (Phase 1C–3F) + 16 (Phase 3G) = **562 passed**, 1
+live-Postgres test skipped unless configured, ruff clean.

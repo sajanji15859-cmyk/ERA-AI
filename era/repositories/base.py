@@ -16,6 +16,8 @@ from era.models import (
     ApiKey,
     AuditLogEntry,
     CircuitBreakerStateRow,
+    IdempotencyRecord,
+    Job,
     MemoryEntry,
     PendingConfirmation,
     PolicyVersion,
@@ -168,3 +170,32 @@ class MemoryRepo(Protocol):
     def list_namespace(self, session, actor_id: str, namespace: str) -> list[MemoryEntry]: ...
 
     def delete(self, session, actor_id: str, namespace: str, key: str) -> bool: ...
+
+
+class IdempotencyRepo(Protocol):
+    """Replay-dedup storage (Phase 3G)."""
+
+    def create(self, session, record: IdempotencyRecord) -> IdempotencyRecord: ...
+
+    def get(self, session, actor_id: str, key_hash: str) -> IdempotencyRecord | None: ...
+
+    def update(self, session, record: IdempotencyRecord) -> IdempotencyRecord: ...
+
+    def delete(self, session, record: IdempotencyRecord) -> None: ...
+
+
+class JobRepo(Protocol):
+    """Background job storage (Phase 3G)."""
+
+    def create(self, session, job: Job) -> Job: ...
+
+    def get(self, session, job_id: str) -> Job | None: ...
+
+    def get_by_idempotency_key(self, session, actor_id: str,
+                               key_hash: str) -> Job | None: ...
+
+    def update(self, session, job: Job) -> Job: ...
+
+    def list_by_actor(self, session, actor_id: str, *, limit: int = 50) -> list[Job]: ...
+
+    def list_by_statuses(self, session, statuses: list[str]) -> list[Job]: ...

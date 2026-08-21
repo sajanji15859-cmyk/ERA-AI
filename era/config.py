@@ -118,7 +118,19 @@ class Settings(BaseSettings):
     code_exec_memory_limit_mb: int = 256
     code_exec_allow_network: bool = False
 
-    app_version: str = "0.6.0"
+    # --- Phase 3G: replay safety + background jobs ---------------------------
+    #: How long a completed idempotency record is honoured before a replayed
+    #: execute (same key) is treated as a fresh request.
+    idempotency_ttl_seconds: int = 86400
+    #: How long an in-flight (processing) idempotency record may remain before
+    #: it is considered abandoned (e.g. after a crash) and can be re-attempted.
+    idempotency_processing_ttl_seconds: int = 300
+    #: In-process background worker pool size for async execution jobs.
+    job_worker_threads: int = 2
+    #: How long completed/failed job rows are retained for inspection.
+    job_ttl_seconds: int = 86400
+
+    app_version: str = "0.7.0"
 
     # Note: a missing/malformed policy is always DENY-all (hard fail-closed).
     # This is intentionally not configurable — weakening it is a footgun.

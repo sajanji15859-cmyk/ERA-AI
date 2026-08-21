@@ -7,6 +7,7 @@ otherwise the Phase 1C–2A container and routes are exactly as before.
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -14,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from era.api.middleware import BodySizeLimitMiddleware, SecurityHeadersMiddleware
 from era.api.rate_limit import RateLimitMiddleware
-from era.api.routes import actions, admin, audit, confirmations, policy, providers, ui, vault
+from era.api.routes import actions, admin, audit, confirmations, jobs, policy, providers, ui, vault
 from era.config import Settings
 from era.container import build_container
 
@@ -26,12 +27,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if settings.agent_enabled:
         from era.agent_runtime import build_agent_container
         container = build_agent_container(settings)
-        title = "ERA AI — Agent (Phase 3F)"
+        title = "ERA AI — Agent (Phase 3G)"
     else:
         container = build_container(settings)
-        title = "ERA AI — Phase 3F"
+        title = "ERA AI — Phase 3G"
 
-    app = FastAPI(title=title, version=settings.app_version)
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        yield
+        # Phase 3G: stop the background worker pool on clean shutdown.
+        if container.job_service is not None:
+            container.job_service.shutdown()
+
+    app = FastAPI(title=title, version=settings.app_version, lifespan=lifespan)
     app.state.container = container
 
     # Input hardening: reject oversized request bodies before any handler.
@@ -56,6 +64,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(providers.router)
     app.include_router(admin.router)
     app.include_router(vault.router)
+    app.include_router(jobs.router)
     if settings.agent_enabled:
         from era.api.routes import agent
         app.include_router(agent.router)

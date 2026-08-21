@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "era-ai"
-version = "0.6.0"
-description = "ERA AI — autonomous agent with secure tools, PostgreSQL scale, and signed audit"
+version = "0.7.0"
+description = "ERA AI — autonomous agent with secure tools, PostgreSQL scale, signed audit, and replay-safe async execution"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -45,7 +45,6 @@ markers = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-exclude = ["agent.py", "brain.py", "chat.py", "config.py", "main.py", "memory.py", "research.py"]
 
 [tool.ruff.lint.per-file-ignores]
 # `Depends(...)` in defaults is the documented FastAPI dependency-injection idiom.
