@@ -26,13 +26,16 @@ from era.repositories.sqlite import (
     SQLiteConfirmationRepo,
     SQLitePolicyRepo,
     SQLiteUserRepo,
+    SQLiteVaultRepo,
 )
+from era.security.vault import parse_master_key
 from era.services.audit_service import AuditService
 from era.services.auth_service import AuthService
 from era.services.confirmation_service import ConfirmationService
 from era.services.execution_service import ExecutionService
 from era.services.permission_engine import PermissionEngine
 from era.services.policy import PolicyService
+from era.services.vault_service import VaultService
 
 
 @dataclass
@@ -50,6 +53,9 @@ class Container:
     policy_repo: SQLitePolicyRepo
     auth_service: AuthService
     execution_service: ExecutionService
+    #: Phase 3C: credential vault. Always built; ``enabled`` is False (and all
+    #: store/resolve operations fail closed) unless a master key is set.
+    vault_service: VaultService
     #: Phase 3A: agent run lifecycle. ``None`` unless the agent runtime wired
     #: it (``build_agent_container``) — the default container stays unchanged.
     agent_service: AgentService | None = None
@@ -82,6 +88,16 @@ def build_container(settings: Settings | None = None,
     policy_service = PolicyService(
         policy_repo=policy_repo, session_factory=session_factory,
         audit_service=audit_service, settings=settings,
+    )
+    # Phase 3C: credential vault (disabled + fail-closed until a master key
+    # is configured via ERA_VAULT_MASTER_KEY).
+    vault_service = VaultService(
+        session_factory=session_factory,
+        vault_repo=SQLiteVaultRepo(),
+        audit_service=audit_service,
+        policy_service=policy_service,
+        settings=settings,
+        master_key=parse_master_key(settings.vault_master_key),
     )
     permission_engine = PermissionEngine(catalog=catalog)
 
@@ -128,4 +144,5 @@ def build_container(settings: Settings | None = None,
         policy_repo=policy_repo,
         auth_service=auth_service,
         execution_service=execution_service,
+        vault_service=vault_service,
     )

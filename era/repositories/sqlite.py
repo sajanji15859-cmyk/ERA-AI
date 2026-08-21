@@ -13,6 +13,7 @@ from era.models import (
     PendingConfirmation,
     PolicyVersion,
     User,
+    VaultSecret,
 )
 from era.repositories.base import NewAuditEntry, VerifyResult
 from era.security.hashing import canonical_json, sha256_hex
@@ -204,6 +205,35 @@ class SQLiteApiKeyRepo:
     def list(self, session) -> list[ApiKey]:
         stmt = select(ApiKey).order_by(ApiKey.created_at)
         return list(session.execute(stmt).scalars().all())
+
+
+class SQLiteVaultRepo:
+    """SQLite credential vault storage (Phase 3C). Ciphertext-only rows."""
+
+    def create(self, session, secret: VaultSecret) -> VaultSecret:
+        session.add(secret)
+        session.flush()
+        return secret
+
+    def get(self, session, domain: str, name: str) -> VaultSecret | None:
+        stmt = select(VaultSecret).where(VaultSecret.domain == domain,
+                                         VaultSecret.name == name)
+        return session.execute(stmt).scalars().first()
+
+    def get_by_id(self, session, secret_id: str) -> VaultSecret | None:
+        return session.get(VaultSecret, secret_id)
+
+    def list(self, session, domain: str | None = None) -> list[VaultSecret]:
+        stmt = select(VaultSecret)
+        if domain is not None:
+            stmt = stmt.where(VaultSecret.domain == domain)
+        stmt = stmt.order_by(VaultSecret.domain, VaultSecret.name)
+        return list(session.execute(stmt).scalars().all())
+
+    def update(self, session, secret: VaultSecret) -> VaultSecret:
+        session.add(secret)
+        session.flush()
+        return secret
 
 
 class SQLiteAgentRunRepo:

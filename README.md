@@ -484,3 +484,71 @@ Free-form model-driven tool selection beyond the planned action (planned for
 providers, browser automation (FREE LIMITATION — needs a real browser),
 multi-agent orchestration, Postgres/migrations and keyed audit signing —
 these stay on the roadmap in `AGENT_AUDIT_AND_PLAN.md`.
+
+## Phase 3C — Credential Vault + Provider Secrets
+
+Phase 3C adds the **credential vault**: the first place provider secrets are
+stored securely, and the first production provider (SMTP email) that consumes
+them. The secret boundary from the audit is preserved exactly — the core
+(agent / LLM / permission / audit layers) only ever sees opaque references
+like `vault:email/smtp_password`; providers resolve them at execution time.
+
+### What it provides
+
+- **Vault core** (`era/security/vault.py`) — secrets encrypted at rest with
+  **AES-256-GCM** (authenticated encryption, `cryptography` lib) under a
+  32-byte env-only master key (`ERA_VAULT_MASTER_KEY`). Fresh random nonce per
+  value; ciphertext bound to `(domain, name)` via AAD so rows can't be
+  swapped. No valid master key → vault **disabled, fail-closed** (nothing
+  stored, nothing resolved); malformed keys are treated as absent.
+- **Vault service** (`era/services/vault_service.py`) — store / rotate (with
+  `revision` bumping) / soft-revoke / metadata list / **resolve**. Every op
+  — including every resolution failure — is appended to the tamper-evident
+  audit log with metadata only (domain/name; never the value).
+- **Vault API** (admin-only, `vault.manage`) —
+  `POST /v1/vault/secrets` (create-or-rotate; value accepted once, never
+  returned), `GET /v1/vault/secrets[?domain=]`,
+  `POST /v1/vault/secrets/{domain}/{name}/revoke`. `user` role gets 403;
+  disabled vault returns 503 on mutations.
+- **SMTP email provider** (`era/providers/email_smtp.py`) — real
+  `email.send` (stdlib `smtplib`, opt-in via `ERA_EMAIL_SMTP_HOST`).
+  Username/password are plain env values **or vault references**, resolved at
+  send time. The credential never appears in params, results, errors or audit
+  rows. Stable error mapping: auth → `AUTH` (never retried), timeout →
+  `TIMEOUT`, connection/server → `UNAVAILABLE`.
+- **LLM key from the vault** — `ERA_AGENT_LLM_API_KEY=vault:llm/openai` is
+  resolved once at build time and fails closed (a misconfigured secret can
+  never masquerade as "no key → offline").
+- **RBAC** — new `vault.manage` permission, **admin-only** (day-to-day `user`
+  roles never touch the vault).
+
+### Try it
+
+```bash
+# 1. generate a master key and enable the vault
+export ERA_VAULT_MASTER_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+
+# 2. store provider secrets (admin API key)
+curl -s -X POST localhost:8000/v1/vault/secrets -H "Authorization: Bearer $ERA_ADMIN_KEY" \
+  -d '{"domain": "email", "name": "smtp_password", "value": "..." }'
+curl -s -X POST localhost:8000/v1/vault/secrets -H "Authorization: Bearer $ERA_ADMIN_KEY" \
+  -d '{"domain": "llm", "name": "openai", "value": "sk-..."}'
+
+# 3. point providers at the vault (references, not secrets)
+export ERA_AGENT_LLM_API_KEY=vault:llm/openai
+export ERA_EMAIL_SMTP_HOST=smtp.example.com ERA_EMAIL_SMTP_PORT=587
+export ERA_EMAIL_SMTP_STARTTLS=true
+export ERA_EMAIL_SMTP_USER=vault:email/smtp_user ERA_EMAIL_SMTP_PASSWORD=vault:email/smtp_password
+ERA_AGENT_ENABLED=true uvicorn era.main:create_app --factory
+```
+
+### Test
+
+```bash
+pytest          # 259 (1C–2A) + 100 (3A) + 39 (3B) + 46 (3C) = 444 tests
+```
+
+Regression locks: disabled vault fails closed everywhere; malformed master
+keys stay disabled; the plaintext is unfindable in the database file, audit
+log, API responses and error messages; `user` role is denied; revoked secrets
+can no longer resolve.
