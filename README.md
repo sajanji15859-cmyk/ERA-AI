@@ -122,3 +122,41 @@ multi-tenant support, PostgreSQL (protocol only), cryptographic signing of audit
 entries, and background workers. Only gating + confirmation for
 financial/booking/communication/device actions is built — their providers come
 later.
+
+---
+
+## Phase 1D — Permission-matrix hardening + provider contracts
+
+Phase 1D does **not** add capabilities. It locks the Phase 1C security boundary
+with exhaustive tests and a reusable ToolProvider contract so later providers
+cannot silently weaken the gate.
+
+### What it adds
+
+- **Exhaustive permission matrix** — every catalogued action’s risk tier,
+  default decision (`ALLOW` / `CONFIRM` / `CONFIRM_STRONG` / `DENY`),
+  `capability_domain`, and `secret_fields` is asserted. Unknown actions, missing
+  policy, malformed policy objects, empty/unmapped tier tables, and broken
+  override predicates are **always DENY**.
+- **FORBIDDEN is override-proof** — catalogued `FORBIDDEN` actions (`secret.export`,
+  `account.delete`) are always `DENY`, even if a policy override, broad allow-all
+  tier table, malformed policy, or a planted confirmation would otherwise
+  authorize them. Execution never dispatches them.
+- **CONFIRM vs CONFIRM_STRONG** — COMMUNICATION/MUTATING stay `CONFIRM`;
+  FINANCIAL/BOOKING/DESTRUCTIVE stay `CONFIRM_STRONG`; FORBIDDEN stays `DENY`.
+- **Provider contract suite** (`tests/provider_contract.py`) — SPI checks
+  (identity, catalogued action types, validate/execute shape, no secret
+  fragments in results, `ToolError` as a valid failure). `StubProvider` is the
+  first implementation under the contract. The same helper is intended for
+  WebProvider, EmailProvider, WhatsAppProvider, BookingProvider,
+  FilePhotoProvider, and AndroidProvider when those land.
+- **Security regression lock** — fail-closed evaluation, confirmation
+  single-use, TTL expiry, action-hash binding, `CONFIRM_STRONG` challenge,
+  audit-write failure blocking dispatch, secret redaction, append-only audit
+  integrity.
+
+### Explicitly NOT in Phase 1D
+
+**Real providers remain out of scope.** No network calls, no API keys / OAuth /
+passwords, no real email / WhatsApp / booking / payment / device / filesystem
+mutations. Stub-only execution continues.
