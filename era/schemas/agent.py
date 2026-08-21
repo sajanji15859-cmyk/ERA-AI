@@ -69,3 +69,46 @@ class AgentRunOut(BaseModel):
 
 class AgentRunListOut(BaseModel):
     runs: list[AgentRunOut] = Field(default_factory=list)
+
+
+class ChatRequest(BaseModel):
+    """Chat message. Start a new run, or continue a paused one via ``run_id``.
+
+    When continuing, the message text is recorded context only — the actual
+    continuation is driven by confirmation resolutions proven in the audit log.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    message: str
+    run_id: str | None = None
+
+    @field_validator("message")
+    @classmethod
+    def _message(cls, v: Any) -> str:
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("message must be a non-empty string")
+        v = v.strip()
+        if len(v) > MAX_GOAL_LEN:
+            raise ValueError("message too long")
+        return v
+
+    @field_validator("run_id")
+    @classmethod
+    def _run_id(cls, v: Any) -> str | None:
+        if v is None:
+            return None
+        if not isinstance(v, str) or not v or len(v) > 128:
+            raise ValueError("run_id must be a short non-empty string")
+        return v
+
+
+class AgentEventOut(BaseModel):
+    run_id: str
+    seq: int
+    type: str
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentEventListOut(BaseModel):
+    events: list[AgentEventOut] = Field(default_factory=list)

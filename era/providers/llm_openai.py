@@ -1,4 +1,4 @@
-"""OpenAI-compatible LLM provider (Phase 3A).
+"""OpenAI-compatible LLM provider (Phase 3A, SSE streaming in 3B).
 
 Talks to any OpenAI-compatible ``chat/completions`` endpoint — OpenAI free
 tier, Groq, OpenRouter, Together, a local Ollama gateway, etc. Configure via:
@@ -51,29 +51,9 @@ class OpenAICompatLLMProvider:
 
     # -- LLMProvider -------------------------------------------------------------
     def complete(self, req: LLMRequest) -> LLMResponse:
-        payload: dict[str, Any] = {
-            "model": self.model,
-            "messages": req.messages,
-            "temperature": self.temperature,
-        }
-        if req.max_tokens is not None and req.max_tokens > 0:
-            payload["max_tokens"] = int(req.max_tokens)
-        tools = (req.metadata or {}).get("tools")
-        if isinstance(tools, list) and tools:
-            payload["tools"] = tools
-            payload["tool_choice"] = "auto"
-
+        payload = self._payload(req, stream=False)
         body = json.dumps(payload).encode("utf-8")
-        request = urllib.request.Request(
-            f"{self.base_url}/chat/completions",
-            data=body,
-            method="POST",
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self._api_key}",
-                "User-Agent": "ERA-Agent/0.3",
-            },
-        )
+        request = self._request(body, accept="application/json")
         try:
             with urllib.request.urlopen(request, timeout=self.timeout_seconds) as resp:
                 raw = resp.read(4 * 1024 * 1024)
@@ -108,8 +88,30 @@ class OpenAICompatLLMProvider:
                            tool_calls=tool_calls, usage=usage)
 
     def stream(self, req: LLMRequest) -> Iterator[LLMResponse]:
-        # Phase 3A ships single-chunk streaming; true SSE streaming is Phase 3B.
-        yield self.complete(req)
+        """Real SSE token streaming (Phase 3B).
+
+        Parses ``text/event-stream`` chunks from the provider, yielding one
+        :class:`LLMResponse` per content delta; the final chunk carries the
+        provider's usage block (requested via ``stream_options``).
+        """
+        payload = self._payload(req, stream=True)
+        body = json.dumps(payload).encode("utf-8")
+        request = self._request(body, accept="text/event-stream")
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as resp:
+                for line in resp:
+                    parsed = _parse_sse_line(line)
+                    if parsed is None:
+                        continue
+                    content, usage = parsed
+                    if content is None:
+                        continue
+                    yield LLMResponse(text=content, usage=usage)
+        except urllib.error.HTTPError as exc:
+            self._raise_http(exc)
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise ToolError("LLM provider unreachable", provider_id=self.id,
+                            code=ProviderErrorCode.UNAVAILABLE) from exc
 
     def describe(self) -> ProviderInfo:
         return ProviderInfo(
@@ -122,6 +124,36 @@ class OpenAICompatLLMProvider:
         )
 
     # -- internals ---------------------------------------------------------------
+    def _payload(self, req: LLMRequest, *, stream: bool) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": req.messages,
+            "temperature": self.temperature,
+            "stream": stream,
+        }
+        if stream:
+            payload["stream_options"] = {"include_usage": True}
+        if req.max_tokens is not None and req.max_tokens > 0:
+            payload["max_tokens"] = int(req.max_tokens)
+        tools = (req.metadata or {}).get("tools")
+        if isinstance(tools, list) and tools and not stream:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+        return payload
+
+    def _request(self, body: bytes, *, accept: str) -> urllib.request.Request:
+        return urllib.request.Request(
+            f"{self.base_url}/chat/completions",
+            data=body,
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self._api_key}",
+                "User-Agent": "ERA-Agent/0.3",
+                "Accept": accept,
+            },
+        )
+
     def _raise_http(self, exc: urllib.error.HTTPError) -> None:
         code = exc.code if isinstance(exc.code, int) else 0
         if code in (401, 403):
@@ -134,3 +166,38 @@ class OpenAICompatLLMProvider:
         raise ToolError(f"LLM provider rejected the request (HTTP {code})",
                         provider_id=self.id,
                         code=ProviderErrorCode.VALIDATION) from exc
+
+
+def _parse_sse_line(line: Any) -> tuple[str | None, dict[str, Any] | None] | None:
+    """Parse one SSE line. Returns (content_delta, usage) or None to skip."""
+    if isinstance(line, bytes):
+        try:
+            line = line.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+    line = (line or "").strip()
+    if not line.startswith("data:"):
+        return None
+    data = line[len("data:"):].strip()
+    if data == "[DONE]":
+        return None
+    try:
+        chunk = json.loads(data)
+    except (TypeError, ValueError):
+        return None  # tolerate malformed keep-alive frames
+    if not isinstance(chunk, dict):
+        return None
+    choices = chunk.get("choices") or []
+    if not choices:
+        usage = chunk.get("usage")
+        return ("", usage) if isinstance(usage, dict) else None
+    first = choices[0]
+    if not isinstance(first, dict):
+        return None
+    delta = first.get("delta") or {}
+    if not isinstance(delta, dict):
+        return None
+    content = delta.get("content")
+    if content is None:
+        return None
+    return str(content), chunk.get("usage") if isinstance(chunk.get("usage"), dict) else None

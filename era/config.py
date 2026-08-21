@@ -72,7 +72,7 @@ class Settings(BaseSettings):
     web_timeout_seconds: float = 15.0
     web_user_agent: str = "ERA-Agent/0.3"
 
-    app_version: str = "0.2.0"
+    app_version: str = "0.3.0"
 
     # Note: a missing/malformed policy is always DENY-all (hard fail-closed).
     # This is intentionally not configurable — weakening it is a footgun.

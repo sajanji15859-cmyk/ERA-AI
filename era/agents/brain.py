@@ -24,6 +24,7 @@ from era.agents.budget import AgentBudget
 from era.agents.content import content_for, resolve_pack
 from era.agents.memory import ShortTermMemory
 from era.agents.models import Task
+from era.agents.pricing import usage_stats
 from era.core.llm import LLMProvider, LLMRequest, ToolCall
 from era.core.result import ProviderErrorCode, ToolError
 
@@ -117,6 +118,7 @@ class LLMBrain:
         self.budget = budget
         self.max_tokens = max_tokens
         self.fallback = fallback or OfflineBrain()
+        self.model = getattr(llm, "model", None)
 
     def prepare(self, task: Task, memory: ShortTermMemory) -> dict[str, Any]:
         params = dict(task.params)
@@ -125,21 +127,13 @@ class LLMBrain:
             return params
         if content_from.startswith("generic:"):
             return params  # deterministic report; no model needed
-        reason = self.budget.can_llm_call()
-        if reason is not None:
-            raise ToolError(reason, code=ProviderErrorCode.UNAVAILABLE)
         prompt = _CONTENT_PROMPT.format(
             goal=memory.goal, title=task.title, path=params.get("path", ""),
             note=task.correction_note or "", verify=json.dumps(task.verify or {}),
         )
         try:
-            response = self.llm.complete(LLMRequest(
-                messages=[{"role": "user", "content": prompt}],
-                model_ref="default",
-                max_tokens=self.max_tokens,
-            ))
-            self.budget.record_llm_call(tokens=_usage_tokens(response.usage))
-            text = _strip_fences(response.text or "")
+            text = self._generate_content(prompt)
+            text = _strip_fences(text or "")
             if not text:
                 raise ToolError("model returned empty content", code=ProviderErrorCode.PROVIDER_ERROR)
             params["content"] = text
@@ -152,6 +146,20 @@ class LLMBrain:
                     fallback_params["content_from"], task, memory)
                 fallback_params.pop("content_from", None)
             return fallback_params
+
+    def _generate_content(self, prompt: str) -> str:
+        """One bounded LLM call with budget + cost accounting."""
+        reason = self.budget.can_llm_call()
+        if reason is not None:
+            raise ToolError(reason, code=ProviderErrorCode.UNAVAILABLE)
+        response = self.llm.complete(LLMRequest(
+            messages=[{"role": "user", "content": prompt}],
+            model_ref="default",
+            max_tokens=self.max_tokens,
+        ))
+        tokens, cost = usage_stats(self.model, response.usage, response.text or "")
+        self.budget.record_llm_call(tokens=tokens, cost_usd=cost)
+        return response.text or ""
 
     def propose_tool_calls(self, task: Task, memory: ShortTermMemory,
                            prepared_params: dict[str, Any]) -> list[ToolCall]:
@@ -171,7 +179,8 @@ class LLMBrain:
                 model_ref="default",
                 max_tokens=512,
             ))
-            self.budget.record_llm_call(tokens=_usage_tokens(response.usage))
+            tokens, cost = usage_stats(self.model, response.usage, response.text or "")
+            self.budget.record_llm_call(tokens=tokens, cost_usd=cost)
             doc = json.loads(_strip_fences(response.text or ""))
             action_type = str(doc.get("action_type", "")).strip()
             params = doc.get("params") if isinstance(doc.get("params"), dict) else {}
@@ -192,12 +201,3 @@ def _strip_fences(text: str) -> str:
             lines = lines[:-1]
         text = "\n".join(lines).strip()
     return text
-
-
-def _usage_tokens(usage: dict[str, Any] | None) -> int:
-    if not usage:
-        return 0
-    try:
-        return int(usage.get("total_tokens", 0))
-    except (TypeError, ValueError):
-        return 0

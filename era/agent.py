@@ -26,7 +26,6 @@ from era.agent_runtime import build_agent_container
 from era.config import Settings
 from era.core.action import Action
 from era.core.enums import Decision
-from era.core.util import utcnow_iso
 
 AUTO_APPROVABLE = frozenset({"fs.write", "fs.move", "web.download"})
 
@@ -66,9 +65,10 @@ def cmd_demo(args) -> int:
         agent_workspace_root=str(workspace_root),
         agent_enabled=True,
     )
+    llm_note = "offline deterministic mode (FREE — no API key)"
     print(f"ERA agent demo — workspace: {workspace_root}")
     print(f"                 demo db:   {db_path} (temporary)")
-    print(f"                 LLM:       {'offline deterministic mode (FREE — no API key)'}")
+    print(f"                 LLM:       {llm_note}")
 
     container = build_agent_container(settings)
 
@@ -82,7 +82,23 @@ def cmd_demo(args) -> int:
 
     approver = _demo_approver(container.execution_service, workspace_root) \
         if args.auto_approve else None
-    record = container.agent_service.start_run(goal, ctx, approval_handler=approver)
+    if args.stream:
+        # Phase 3B: live event stream (same events the SSE chat API emits).
+        last_event = None
+        for ev in container.agent_service.start_run_stream(
+                goal, ctx, role="user", approval_handler=approver):
+            last_event = ev
+            data = json.dumps(ev.data, ensure_ascii=False)
+            print(f"  [event] {ev.type.value}: {data[:150]}")
+        record = container.agent_service.get_run(last_event.run_id, user.id) \
+            if last_event is not None else None
+    else:
+        record = container.agent_service.start_run(goal, ctx, role="user",
+                                                   approval_handler=approver)
+
+    if record is None:
+        print("run produced no record", file=sys.stderr)
+        return 1
 
     print("=" * 70)
     print("RUN REPORT")
@@ -121,7 +137,7 @@ def cmd_run(args) -> int:
     user = container.auth_service.create_user(username="run-user", role="user")
     from era.core.context import ExecutionContext
     ctx = ExecutionContext(actor_id=user.id, session_id="run")
-    record = container.agent_service.start_run(args.goal, ctx)
+    record = container.agent_service.start_run(args.goal, ctx, role="user")
     print(record.result.model_dump_json(indent=2))
     return 0
 
@@ -136,6 +152,8 @@ def main() -> int:
     demo.add_argument("--goal", default=None)
     demo.add_argument("--auto-approve", action="store_true",
                       help="demo operator auto-approves workspace-scoped CONFIRM actions")
+    demo.add_argument("--stream", action="store_true",
+                      help="print the live event stream (Phase 3B)")
     demo.set_defaults(func=cmd_demo)
 
     run = sub.add_parser("run", help="run a single goal (no approvals)")

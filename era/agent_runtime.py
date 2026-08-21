@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from era.agents.brain import LLMBrain, OfflineBrain
+from era.agents.brain import OfflineBrain
 from era.agents.memory import LongTermMemoryService
 from era.agents.planner import LLMPlanner, RulePlanner
 from era.agents.verifier import Verifier
@@ -77,15 +77,35 @@ def build_agent_container(settings: Settings | None = None) -> Container:
 
     catalog_actions = sorted(s.action_type for s in container.catalog)
 
-    def make_planner(budget):
+    def _domain_guard_for(role: str):
+        from era.core.enums import RiskLevel
+        from era.security.rbac import role_domain_allowed
+
+        def guard(action_type: str) -> bool:
+            spec = container.catalog.get(action_type)
+            if spec is None or spec.risk_level is RiskLevel.FORBIDDEN:
+                return False
+            return role_domain_allowed(role, spec.capability_domain)
+        return guard
+
+    def make_planner(budget, role: str = "user"):
         if llm is not None:
             return LLMPlanner(llm, budget, fallback=RulePlanner(),
                               catalog_actions=catalog_actions)
         return RulePlanner()
 
-    def make_brain(budget):
+    def make_brain(budget, role: str = "user"):
         if llm is not None:
-            return LLMBrain(llm, budget, max_tokens=int(settings.agent_llm_max_tokens))
+            # Phase 3B: native function-calling tool selection with the RBAC
+            # domain guard — the model only ever sees tools this role may use.
+            from era.agents.tool_brain import ToolCallBrain
+            return ToolCallBrain(
+                llm, budget,
+                catalog=container.catalog,
+                registry=container.registry,
+                allowed=_domain_guard_for(role),
+                max_tokens=int(settings.agent_llm_max_tokens),
+            )
         return OfflineBrain()
 
     container.agent_service = AgentService(

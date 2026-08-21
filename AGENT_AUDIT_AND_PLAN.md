@@ -1,6 +1,6 @@
 # ERA-AI → Autonomous AI Agent: Full Audit & Transformation Roadmap
 
-*Status: audit complete + **Phase 3A (MVEA) implemented** in this session. Baseline before changes: `259 passed` on `main` (Phase 1C–1F + 2A). All existing tests still pass after Phase 3A.*
+*Status: audit complete + **Phase 3A (MVEA)** and **Phase 3B (LLM hardening + streaming chat API)** implemented in this session. Baseline before changes: `259 passed` on `main` (Phase 1C–1F + 2A). All existing tests still pass — current total: **398 passed** (259 pre-existing + 139 new).*
 
 ---
 
@@ -227,12 +227,12 @@ The agent adds **no new privilege surface** — every tool call flows through th
 | **Phase E — Memory/state** | Short-term run memory + long-term per-actor SQLite memory | ✅ delivered (3A) |
 | **Phase F — Verification + retry** | Verifier (action/file/HTML/link), correction notes, bounded retry, one replan | ✅ delivered (3A) |
 | **Phase G — Web/browser** | Real web.search/fetch/download shipped; browser automation = FREE LIMITATION (later, Playwright/self-hosted) | ⬜ partial (next) |
+| **Phase 3B — LLM hardening + streaming chat** | SSE chat API + typed events, ToolCallBrain (native function calling, catalog/registry/RBAC-validated), prompt-injection defense + tests, in-loop RBAC domain guard, pricing/cost accounting, real SSE LLM streaming, 5 product bugs fixed (incl. duplicate-approval poisoning, missing `_settle_failure`, artifact loss on resume, 2A param caps blocking API approvals) | ✅ delivered (3B) |
 | **Phase H — Coding/file agent** | The welding-site goal works end-to-end; deeper code-exec sandbox + git integration next | ⬜ next |
 | **Phase I — Multi-agent, streaming UI, credential vault, Postgres, signing** | Multiple agents, SSE streaming chat, vault (2B), migrations, keyed audit signing, rate limiting | ⬜ future |
 
 ### Next recommended phases (in order)
-1. **Phase 3B — Real LLM hardening + streaming chat API** (turn the run API into an SSE-streamed conversation, LLMPlanner/LLMBrain live with real keys, prompt-injection tests).
-2. **Phase 3C — Credential vault (2B)** so real providers (email/GitHub) can resolve secrets safely.
+1. **Phase 3C — Credential vault (2B)** so real providers (email/GitHub) can resolve secrets safely.
 3. **Phase 3D — GitHub + code-exec sandbox provider** (user's "GitHub/code capability" ask) — `github.*` action types, PAT in vault, repo/file operations; subprocess code runner with allowlist, time/memory caps, no network by default.
 4. **Phase 3E — Web UI** (mobile-first chat dashboard over the same authenticated API).
 5. **Phase 3F — Scale:** Postgres, Alembic, keyed audit signing, rate limiting.

@@ -151,16 +151,29 @@ class ExecutionService:
 
             ok, reason = self.confirmation_service.validate(confirmation, action, challenge)
             if not ok:
-                status = STATUS_EXPIRED if reason == "expired" else STATUS_DENIED
-                outcome = Outcome.EXPIRED if reason == "expired" else Outcome.REJECTED
-                self.confirmation_service.mark_status(session, confirmation, status)
-                self.audit_service.record(
-                    session, action=action, ctx=ctx,
-                    risk_level=confirmation.risk_level,
-                    decision=Decision(confirmation.decision), outcome=outcome,
-                    policy_version=confirmation.policy_version,
-                    confirmation_id=confirmation.id, result=reason,
-                )
+                if confirmation.status in (STATUS_USED, STATUS_DENIED, STATUS_EXPIRED):
+                    # Already terminal: record the redundant attempt WITHOUT
+                    # mutating the confirmation (a duplicate approve/deny must
+                    # never overwrite the real outcome — Phase 3B fix).
+                    self.audit_service.record(
+                        session, action=action, ctx=ctx,
+                        risk_level=confirmation.risk_level,
+                        decision=Decision(confirmation.decision), outcome=Outcome.REJECTED,
+                        policy_version=confirmation.policy_version,
+                        confirmation_id=confirmation.id,
+                        result=f"redundant resolution attempt: {reason}",
+                    )
+                else:
+                    status = STATUS_EXPIRED if reason == "expired" else STATUS_DENIED
+                    outcome = Outcome.EXPIRED if reason == "expired" else Outcome.REJECTED
+                    self.confirmation_service.mark_status(session, confirmation, status)
+                    self.audit_service.record(
+                        session, action=action, ctx=ctx,
+                        risk_level=confirmation.risk_level,
+                        decision=Decision(confirmation.decision), outcome=outcome,
+                        policy_version=confirmation.policy_version,
+                        confirmation_id=confirmation.id, result=reason,
+                    )
                 return ExecutionResponse(status="denied", decision=Decision(confirmation.decision),
                                          message=reason)
 

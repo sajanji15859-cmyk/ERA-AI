@@ -23,7 +23,21 @@ from era.repositories.base import MemoryRepo
 MAX_SHORT_TERM_OBSERVATIONS = 200
 MAX_SHORT_TERM_FACTS = 500
 MAX_FACT_VALUE_CHARS = 20_000
+MAX_OBSERVATION_STR = 4000
 MAX_ENTRIES_PER_NAMESPACE = 200
+
+
+def _bounded(value: Any, depth: int = 0) -> Any:
+    """Truncate strings recursively so stored observations stay bounded."""
+    if depth > 5:
+        return "[truncated]"
+    if isinstance(value, str):
+        return value if len(value) <= MAX_OBSERVATION_STR else value[:MAX_OBSERVATION_STR] + "…"
+    if isinstance(value, dict):
+        return {k: _bounded(v, depth + 1) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_bounded(x, depth + 1) for x in value[:100]]
+    return value
 
 
 class ShortTermMemory:
@@ -46,7 +60,7 @@ class ShortTermMemory:
         return self.facts.get(key, default)
 
     def record_observation(self, observation: dict[str, Any]) -> None:
-        self.observations.append(observation)
+        self.observations.append(_bounded(observation))
         if len(self.observations) > MAX_SHORT_TERM_OBSERVATIONS:
             self.observations = self.observations[-MAX_SHORT_TERM_OBSERVATIONS:]
 
@@ -55,10 +69,21 @@ class ShortTermMemory:
             self.artifacts.append(artifact)
 
     def rebuild_from_tasks(self, tasks: list[Any]) -> None:
-        """Rehydrate working memory from persisted tasks after a resume."""
+        """Rehydrate working memory from persisted tasks after a resume.
+
+        Restores observations AND artifacts (completed ``fs.write`` paths), so
+        a resumed run reports the same artifact set a fresh run would.
+        """
         for task in tasks:
             for obs in getattr(task, "observations", []) or []:
                 self.record_observation(obs)
+            status = getattr(task, "status", None)
+            action_type = getattr(task, "action_type", "")
+            params = getattr(task, "params", None) or {}
+            if action_type == "fs.write" and getattr(status, "value", None) == "completed":
+                path = params.get("path")
+                if path:
+                    self.record_artifact(str(path))
 
 
 class LongTermMemoryService:

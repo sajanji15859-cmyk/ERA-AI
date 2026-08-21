@@ -115,13 +115,66 @@ def test_garbage_response_maps_to_provider_error(monkeypatch):
     assert err.value.code is ProviderErrorCode.PROVIDER_ERROR
 
 
-def test_stream_falls_back_to_complete(monkeypatch):
+def test_stream_yields_chunks_from_sse(monkeypatch):
+    """Real SSE token streaming (Phase 3B)."""
+    lines = [
+        b'data: {"choices":[{"delta":{"content":"Hel"}}]}\n',
+        b'data: {"choices":[{"delta":{"content":"lo"}}]}\n',
+        b"data: [DONE]\n",
+        b'data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":2,"total_tokens":9}}\n',
+    ]
+
+    class FakeResp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def __iter__(self):
+            return iter(lines)
+
+    monkeypatch.setattr("era.providers.llm_openai.urllib.request.urlopen", lambda *a, **k: FakeResp())
+    chunks = list(_provider().stream(LLMRequest(messages=[])))
+    texts = [c.text for c in chunks if c.text]
+    assert texts == ["Hel", "lo"]
+    assert chunks[-1].usage == {"prompt_tokens": 7, "completion_tokens": 2,
+                                "total_tokens": 9}
+
+
+def test_stream_survives_malformed_frames(monkeypatch):
+    lines = [
+        b": keep-alive\n",
+        b"data: not-json\n",
+        b'data: {"choices":[{"delta":{"content":"ok"}}]}\n',
+        b"data: [DONE]\n",
+    ]
+
+    class FakeResp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def __iter__(self):
+            return iter(lines)
+
+    monkeypatch.setattr("era.providers.llm_openai.urllib.request.urlopen", lambda *a, **k: FakeResp())
+    chunks = list(_provider().stream(LLMRequest(messages=[])))
+    assert [c.text for c in chunks if c.text] == ["ok"]
+
+
+def test_stream_maps_http_errors(monkeypatch):
+    import urllib.error
+
     def fake_urlopen(request, timeout=None):
-        return _FakeResponse({"choices": [{"message": {"content": "one"}}]})
+        raise urllib.error.HTTPError(request.full_url, 401, "err", {}, None)
 
     monkeypatch.setattr("era.providers.llm_openai.urllib.request.urlopen", fake_urlopen)
-    chunks = list(_provider().stream(LLMRequest(messages=[])))
-    assert [c.text for c in chunks] == ["one"]
+    with pytest.raises(ToolError) as err:
+        list(_provider().stream(LLMRequest(messages=[])))
+    assert err.value.code is ProviderErrorCode.AUTH
 
 
 def test_describe_has_no_secrets():
