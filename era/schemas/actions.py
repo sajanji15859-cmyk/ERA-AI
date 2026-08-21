@@ -1,26 +1,72 @@
-"""Action request/response schemas."""
+"""Action request/response schemas.
+
+Phase 2A hardening: request schemas reject unknown fields (``extra='forbid'``)
+and validate the action type and parameter payload bounds so malformed,
+unexpected, oversized or unknown inputs are rejected before reaching any
+service. Client-supplied identity fields (``actor_id``/``session_id``/
+``credential_refs``) have been removed — identity is always derived server-side
+from the authenticated principal.
+"""
 
 from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from era.core.enums import Decision, RiskLevel
 from era.core.result import ActionResult
+from era.security.validation import (
+    ValidationError_,
+    validate_action_type,
+    validate_params,
+)
 
 
 class ActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     action_type: str
     params: dict[str, Any] = Field(default_factory=dict)
-    actor_id: str = "api"
-    session_id: str | None = None
-    credential_refs: dict[str, str] = Field(default_factory=dict)  # opaque refs only
+
+    @field_validator("action_type")
+    @classmethod
+    def _action_type(cls, v: Any) -> str:
+        try:
+            return validate_action_type(v)
+        except ValidationError_ as e:
+            raise ValueError(str(e)) from None
+
+    @field_validator("params")
+    @classmethod
+    def _params(cls, v: Any) -> dict[str, Any]:
+        try:
+            return validate_params(v)
+        except ValidationError_ as e:
+            raise ValueError(str(e)) from None
 
 
 class EvaluateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     action_type: str
     params: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("action_type")
+    @classmethod
+    def _action_type(cls, v: Any) -> str:
+        try:
+            return validate_action_type(v)
+        except ValidationError_ as e:
+            raise ValueError(str(e)) from None
+
+    @field_validator("params")
+    @classmethod
+    def _params(cls, v: Any) -> dict[str, Any]:
+        try:
+            return validate_params(v)
+        except ValidationError_ as e:
+            raise ValueError(str(e)) from None
 
 
 class EvaluateResponse(BaseModel):

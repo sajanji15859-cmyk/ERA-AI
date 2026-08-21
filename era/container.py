@@ -17,11 +17,14 @@ from era.db import init_db, make_engine
 from era.providers import StubProvider
 from era.registry.actions import ACTION_CATALOG
 from era.repositories.sqlite import (
+    SQLiteApiKeyRepo,
     SQLiteAuditRepo,
     SQLiteConfirmationRepo,
     SQLitePolicyRepo,
+    SQLiteUserRepo,
 )
 from era.services.audit_service import AuditService
+from era.services.auth_service import AuthService
 from era.services.confirmation_service import ConfirmationService
 from era.services.execution_service import ExecutionService
 from era.services.permission_engine import PermissionEngine
@@ -41,6 +44,7 @@ class Container:
     confirmation_service: ConfirmationService
     policy_service: PolicyService
     policy_repo: SQLitePolicyRepo
+    auth_service: AuthService
     execution_service: ExecutionService
 
 
@@ -61,6 +65,8 @@ def build_container(settings: Settings | None = None,
     audit_repo = SQLiteAuditRepo(genesis_hash=settings.audit_genesis_hash)
     confirmation_repo = SQLiteConfirmationRepo()
     policy_repo = SQLitePolicyRepo()
+    user_repo = SQLiteUserRepo()
+    api_key_repo = SQLiteApiKeyRepo()
 
     audit_service = AuditService(audit_repo=audit_repo, catalog=catalog, settings=settings)
     confirmation_service = ConfirmationService(
@@ -71,6 +77,11 @@ def build_container(settings: Settings | None = None,
         audit_service=audit_service, settings=settings,
     )
     permission_engine = PermissionEngine(catalog=catalog)
+
+    auth_service = AuthService(
+        session_factory=session_factory, user_repo=user_repo,
+        api_key_repo=api_key_repo, catalog=catalog, settings=settings,
+    )
 
     # Phase 1F reliability layer: provider-agnostic retry policy + per-provider
     # circuit breakers, both derived from settings with safe bounded defaults.
@@ -94,6 +105,7 @@ def build_container(settings: Settings | None = None,
     )
 
     policy_service.bootstrap()
+    auth_service.bootstrap_admin()
 
     return Container(
         settings=settings,
@@ -107,5 +119,6 @@ def build_container(settings: Settings | None = None,
         confirmation_service=confirmation_service,
         policy_service=policy_service,
         policy_repo=policy_repo,
+        auth_service=auth_service,
         execution_service=execution_service,
     )

@@ -21,6 +21,7 @@ class PendingConfirmation(Base):
     __tablename__ = "pending_confirmation"
 
     id = Column(String, primary_key=True)  # UUID hex
+    actor_id = Column(String, nullable=True)  # initiating user (Phase 2A actor-bound)
     action_type = Column(String, nullable=False)
     action_hash = Column(String, nullable=False)  # canonical hash of (type+params+risk)
     risk_level = Column(String, nullable=False)
