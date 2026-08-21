@@ -20,7 +20,9 @@ from era.agents.verifier import Verifier
 from era.config import Settings
 from era.container import Container, build_container
 from era.providers import StubProvider
+from era.providers.code_exec import CodeExecProvider
 from era.providers.email_smtp import EmailSmtpProvider
+from era.providers.github import GitHubProvider
 from era.providers.llm_openai import OpenAICompatLLMProvider
 from era.providers.web import WebProvider
 from era.providers.workspace import WorkspaceProvider
@@ -93,6 +95,33 @@ def build_email_provider(settings: Settings, vault_resolver: VaultRefResolver):
     )
 
 
+def build_github_provider(settings: Settings, vault_resolver: VaultRefResolver):
+    """Build the GitHub provider (Phase 3D).
+
+    Token may be a plain env string or a vault reference (e.g. vault:github/token).
+    """
+    token = settings.github_token.strip() if settings.github_token else ""
+    return GitHubProvider(
+        token=token,
+        api_base_url=settings.github_api_base_url,
+        timeout_seconds=float(settings.github_timeout_seconds),
+        user_agent=settings.github_user_agent,
+        max_response_bytes=int(settings.github_max_response_bytes),
+        secret_resolver=vault_resolver,
+    )
+
+
+def build_code_exec_provider(settings: Settings, workspace_root: Path):
+    """Build the Code-Exec sandbox provider (Phase 3D)."""
+    return CodeExecProvider(
+        workspace_root=workspace_root,
+        timeout_seconds=float(settings.code_exec_timeout_seconds),
+        max_output_bytes=int(settings.code_exec_max_output_bytes),
+        memory_limit_mb=int(settings.code_exec_memory_limit_mb),
+        allow_network=bool(settings.code_exec_allow_network),
+    )
+
+
 def build_agent_container(settings: Settings | None = None) -> Container:
     """Build a container wired for the ERA agent (real providers + AgentService)."""
     settings = settings or Settings()
@@ -105,16 +134,23 @@ def build_agent_container(settings: Settings | None = None) -> Container:
                       user_agent=settings.web_user_agent,
                       workspace_root=workspace_root)
 
-    # Phase 3C: provider secrets. The resolver adapter is attached to the
-    # container's VaultService right after build_container; before that, every
-    # resolution fails closed.
+    # Phase 3C & 3D: provider secrets and real providers.
     vault_resolver = VaultRefResolver()
     email = build_email_provider(settings, vault_resolver)
+    github = build_github_provider(settings, vault_resolver)
+    code_exec = build_code_exec_provider(settings, workspace_root)
+
     providers = [workspace, web]
     claimed = workspace.action_types | web.action_types
     if email is not None:
         providers.append(email)
         claimed |= email.action_types
+    if github is not None:
+        providers.append(github)
+        claimed |= github.action_types
+    if code_exec is not None:
+        providers.append(code_exec)
+        claimed |= code_exec.action_types
     providers.append(StubProvider(exclude=claimed))
 
     container = build_container(settings, providers=providers)

@@ -228,15 +228,16 @@ The agent adds **no new privilege surface** — every tool call flows through th
 | **Phase F — Verification + retry** | Verifier (action/file/HTML/link), correction notes, bounded retry, one replan | ✅ delivered (3A) |
 | **Phase G — Web/browser** | Real web.search/fetch/download shipped; browser automation = FREE LIMITATION (later, Playwright/self-hosted) | ⬜ partial (next) |
 | **Phase 3B — LLM hardening + streaming chat** | SSE chat API + typed events, ToolCallBrain (native function calling, catalog/registry/RBAC-validated), prompt-injection defense + tests, in-loop RBAC domain guard, pricing/cost accounting, real SSE LLM streaming, 5 product bugs fixed (incl. duplicate-approval poisoning, missing `_settle_failure`, artifact loss on resume, 2A param caps blocking API approvals) | ✅ delivered (3B) |
-| **Phase H — Coding/file agent** | The welding-site goal works end-to-end; deeper code-exec sandbox + git integration next | ⬜ next |
+| **Phase H — Coding/file agent** | The welding-site goal works end-to-end; deeper code-exec sandbox + git integration next | ✅ delivered (3D) |
 | **Phase 3C — Credential vault + provider secrets (2B)** | AES-256-GCM vault (env-only master key, fail-closed), admin vault API, vault-backed secret resolution for providers, real SMTP email provider, LLM key via vault, `vault.manage` RBAC | ✅ delivered (3C) |
+| **Phase 3D — GitHub + code-exec sandbox providers** | `github.*` action types, PAT in vault, repo/issue/PR/file operations; isolated subprocess code runner with safe env scrub, time/memory caps | ✅ delivered (3D) |
 | **Phase I — Multi-agent, streaming UI, Postgres, signing** | Multiple agents, SSE streaming chat, migrations, keyed audit signing, rate limiting (vault done in 3C) | ⬜ future |
 
 ### Next recommended phases (in order)
 1. ~~Phase 3C — Credential vault (2B)~~ — ✅ delivered.
-3. **Phase 3D — GitHub + code-exec sandbox provider** (user's "GitHub/code capability" ask) — `github.*` action types, PAT in vault, repo/file operations; subprocess code runner with allowlist, time/memory caps, no network by default.
-4. **Phase 3E — Web UI** (mobile-first chat dashboard over the same authenticated API).
-5. **Phase 3F — Scale:** Postgres, Alembic, keyed audit signing, rate limiting.
+2. ~~Phase 3D — GitHub + code-exec sandbox provider~~ — ✅ delivered.
+3. **Phase 3E — Web UI** (mobile-first chat dashboard over the same authenticated API).
+4. **Phase 3F — Scale:** Postgres, Alembic, keyed audit signing, rate limiting.
 
 ### Testing strategy per phase (uniform)
 - New behavior: unit tests per component (planner, task manager, budget, verifier, memory).
@@ -323,3 +324,37 @@ refs; providers own credential access), fail-closed defaults,
 audit-before-everything (vault ops + resolutions are audit rows), the
 default container is unchanged when no vault key / SMTP host is configured,
 and all 398 pre-existing tests pass unmodified (total now 444).
+
+## K) PHASE 3D DELIVERED — file inventory
+
+New modules:
+
+```
+era/providers/github.py        GitHubProvider: repo_get, issue_list, issue_get,
+                               issue_create, issue_comment, pr_list, pr_get,
+                               pr_create, file_get, file_commit; vault PAT
+                               resolution; strict input validation & path bounds;
+                               error taxonomy mapping (401/403/404/422/429/5xx).
+era/providers/code_exec.py     CodeExecProvider: sandboxed Python subprocess runner
+                               (code.run, code.exec); clean environment scrub
+                               (no secrets leaked to child); workspace confinement;
+                               wall-clock & CPU/memory limits; output truncation.
+tests/test_github_provider.py  51 tests: SPI contract, describe, input validation,
+                               vault resolution, mocked repo/issue/PR/file ops,
+                               error taxonomy, secret leakage protection.
+tests/test_code_exec_provider.py  27 tests: SPI contract, describe, validation,
+                               Python execution, non-zero exits, args, timeouts,
+                               env secret scrubbing, workspace containment,
+                               output size truncation.
+```
+
+Modified (additive only):
+* `era/registry/actions.py`: catalogued 10 `github.*` and 2 `code.*` actions with risk tiers and secret fields.
+* `era/security/rbac.py`: added `github` and `code` to `Role.USER` capability domain allowlist.
+* `era/security/validation.py`: added `github.file_commit` and `code.*` to `CONTENT_ACTIONS`.
+* `era/config.py`: added `github_*` and `code_exec_*` settings (v0.5.0).
+* `era/agents/tool_schema.py`: added JSON parameter schemas and descriptions for GitHub and Code tools.
+* `era/agent_runtime.py`: wired `GitHubProvider` and `CodeExecProvider` into agent container with vault resolver support.
+* `era/providers/__init__.py`: exported `GitHubProvider` and `CodeExecProvider`.
+* `tests/test_permission_matrix.py`: catalog consistency checks for GitHub and Code actions.
+* `.env.example`, `pyproject.toml`, `README.md`.

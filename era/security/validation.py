@@ -17,9 +17,16 @@ MAX_PARAMS = 32
 MAX_PARAM_KEY_LEN = 64
 #: Maximum length of a single string value.
 MAX_STR_LEN = 2000
-#: Actions whose params legitimately carry full file content (Phase 3B).
+#: Actions whose params legitimately carry full file content (Phase 3B/3D).
 #: Their string cap matches the workspace provider's max file bytes.
-CONTENT_ACTIONS: frozenset[str] = frozenset({"fs.write", "photo.edit", "photo.upload"})
+CONTENT_ACTIONS: frozenset[str] = frozenset({
+    "fs.write",
+    "photo.edit",
+    "photo.upload",
+    "github.file_commit",
+    "code.run",
+    "code.exec",
+})
 #: String cap for content-bearing params of the actions above.
 MAX_CONTENT_LEN = 1_048_576
 #: Approximate total "characters" budget across the whole params tree.

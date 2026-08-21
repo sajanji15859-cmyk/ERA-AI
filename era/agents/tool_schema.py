@@ -92,6 +92,110 @@ TOOL_PARAM_SCHEMAS.update({
         "properties": {"path": {"type": "string"}},
         "required": ["path"],
     },
+    # Phase 3D: GitHub
+    "github.repo_get": {
+        "type": "object",
+        "properties": {"repo": {"type": "string", "description": "owner/repo"}},
+        "required": ["repo"],
+    },
+    "github.issue_list": {
+        "type": "object",
+        "properties": {
+            "repo": {"type": "string", "description": "owner/repo"},
+            "state": {"type": "string", "description": "open|closed|all"},
+        },
+        "required": ["repo"],
+    },
+    "github.issue_get": {
+        "type": "object",
+        "properties": {
+            "repo": {"type": "string", "description": "owner/repo"},
+            "issue_number": {"type": "integer", "description": "issue number"},
+        },
+        "required": ["repo", "issue_number"],
+    },
+    "github.issue_create": {
+        "type": "object",
+        "properties": {
+            "repo": {"type": "string", "description": "owner/repo"},
+            "title": {"type": "string", "description": "issue title"},
+            "body": {"type": "string", "description": "issue body"},
+        },
+        "required": ["repo", "title"],
+    },
+    "github.issue_comment": {
+        "type": "object",
+        "properties": {
+            "repo": {"type": "string", "description": "owner/repo"},
+            "issue_number": {"type": "integer", "description": "issue number"},
+            "body": {"type": "string", "description": "comment body"},
+        },
+        "required": ["repo", "issue_number", "body"],
+    },
+    "github.pr_list": {
+        "type": "object",
+        "properties": {
+            "repo": {"type": "string", "description": "owner/repo"},
+            "state": {"type": "string", "description": "open|closed|all"},
+        },
+        "required": ["repo"],
+    },
+    "github.pr_get": {
+        "type": "object",
+        "properties": {
+            "repo": {"type": "string", "description": "owner/repo"},
+            "pull_number": {"type": "integer", "description": "PR number"},
+        },
+        "required": ["repo", "pull_number"],
+    },
+    "github.pr_create": {
+        "type": "object",
+        "properties": {
+            "repo": {"type": "string", "description": "owner/repo"},
+            "title": {"type": "string", "description": "PR title"},
+            "head": {"type": "string", "description": "head branch"},
+            "base": {"type": "string", "description": "base branch"},
+            "body": {"type": "string", "description": "PR description"},
+        },
+        "required": ["repo", "title", "head", "base"],
+    },
+    "github.file_get": {
+        "type": "object",
+        "properties": {
+            "repo": {"type": "string", "description": "owner/repo"},
+            "path": {"type": "string", "description": "file path in repo"},
+            "ref": {"type": "string", "description": "branch, tag or commit SHA"},
+        },
+        "required": ["repo", "path"],
+    },
+    "github.file_commit": {
+        "type": "object",
+        "properties": {
+            "repo": {"type": "string", "description": "owner/repo"},
+            "path": {"type": "string", "description": "file path in repo"},
+            "message": {"type": "string", "description": "commit message"},
+            "content": {"type": "string", "description": "file content to commit"},
+            "branch": {"type": "string", "description": "target branch"},
+        },
+        "required": ["repo", "path", "message", "content"],
+    },
+    # Phase 3D: Code execution
+    "code.run": {
+        "type": "object",
+        "properties": {
+            "code": {"type": "string", "description": "Python code snippet to execute"},
+            "language": {"type": "string", "description": "python"},
+        },
+        "required": ["code"],
+    },
+    "code.exec": {
+        "type": "object",
+        "properties": {
+            "code": {"type": "string", "description": "Python code snippet to execute"},
+            "language": {"type": "string", "description": "python"},
+        },
+        "required": ["code"],
+    },
 })
 
 TOOL_DESCRIPTIONS: dict[str, str] = {
@@ -107,6 +211,18 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "photo.edit": "Overwrite an image asset in the workspace (approval-gated).",
     "photo.upload": "Write a new image asset into the workspace (approval-gated).",
     "photo.delete": "Delete an image asset. REQUIRES strong approval.",
+    "github.repo_get": "Get metadata for a GitHub repository (stars, forks, description).",
+    "github.issue_list": "List issues in a GitHub repository.",
+    "github.issue_get": "Get details of a specific GitHub issue.",
+    "github.issue_create": "Create a new issue in a GitHub repository (approval-gated).",
+    "github.issue_comment": "Add a comment to an existing GitHub issue (approval-gated).",
+    "github.pr_list": "List pull requests in a GitHub repository.",
+    "github.pr_get": "Get details of a specific GitHub pull request.",
+    "github.pr_create": "Create a new pull request in a GitHub repository (approval-gated).",
+    "github.file_get": "Read file contents from a GitHub repository.",
+    "github.file_commit": "Create or update a file in a GitHub repository (approval-gated).",
+    "code.run": "Execute Python code in a sandboxed, isolated subprocess with resource limits.",
+    "code.exec": "Execute Python code in a sandboxed, isolated subprocess with resource limits.",
     "stub.noop": "No-op used for tests only.",
 }
 

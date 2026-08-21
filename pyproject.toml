@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "era-ai"
-version = "0.4.0"
-description = "ERA AI — autonomous agent (Phase 3A/3B/3C: loop, tools, memory, verification, LLM, streaming, credential vault)"
+version = "0.5.0"
+description = "ERA AI — autonomous agent (Phase 3A/3B/3C/3D: loop, tools, memory, verification, LLM, vault, GitHub, code-exec)"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
