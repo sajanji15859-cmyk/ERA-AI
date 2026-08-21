@@ -6,9 +6,11 @@ Two-phase, fail-closed execution model:
   state is durably persisted to the audit log **and committed** in one
   transaction. If this write fails, the action is NOT executed.
 * **Phase B (dispatch)** — the provider is invoked **outside** any database
-  transaction (external network/device work must never hold a DB transaction).
+  transaction (external network/device work must never hold a DB transaction),
+  bounded by a hard wall-clock timeout (Phase 1E).
 * **Phase C (result)** — the resulting EXECUTED/FAILED/REJECTED event is
-  appended in a fresh transaction.
+  appended in a fresh transaction, carrying a stable
+  :class:`~era.core.result.ProviderErrorCode` on failure.
 
 The engine and this service are the only route to execution; providers are never
 directly invokable by routes or the agent loop.
@@ -16,10 +18,13 @@ directly invokable by routes or the agent loop.
 
 from __future__ import annotations
 
+import time
+
 from era.core.action import Action
 from era.core.context import ExecutionContext
 from era.core.enums import Decision, Outcome, RiskLevel
-from era.core.result import ActionResult, ToolError
+from era.core.result import ActionResult, ProviderErrorCode, ToolError
+from era.core.timeout import run_with_timeout
 from era.core.tool_registry import ActionCatalog, ToolRegistry
 from era.db import transaction
 from era.models.confirmation import STATUS_DENIED, STATUS_EXPIRED, STATUS_USED
@@ -203,14 +208,17 @@ class ExecutionService:
     def _dispatch_and_record(self, action, ctx, decision, policy_version, confirmation_id):
         provider = self.registry.get(action.action_type)
         if provider is None:
-            outcome, success, summary = Outcome.REJECTED, False, "no provider registered for action"
+            outcome, success, summary, error_code = (
+                Outcome.REJECTED, False, "no provider registered for action",
+                ProviderErrorCode.NOT_IMPLEMENTED,
+            )
         else:
-            outcome, success, summary = self._run_provider(provider, action, ctx)
+            outcome, success, summary, error_code = self._run_provider(provider, action, ctx)
 
         risk_level, domain, provider_id, credential_ref = self._meta(action.action_type, ctx)
         self._record(action, ctx, risk_level, decision, outcome, policy_version,
                      domain, provider_id, credential_ref, confirmation_id=confirmation_id,
-                     result=summary)
+                     result=summary, error_code=error_code.value if error_code else None)
 
         status = {Outcome.EXECUTED: "executed", Outcome.FAILED: "failed",
                   Outcome.REJECTED: "rejected"}[outcome]
@@ -218,29 +226,63 @@ class ExecutionService:
                                  result=ActionResult(success=success, summary=summary),
                                  message=None if success else summary)
 
-    def _run_provider(self, provider, action, ctx) -> tuple[Outcome, bool, str]:
+    def _timeout_budget(self) -> float:
+        return float(getattr(self.settings, "provider_timeout_seconds", 0.0) or 0.0)
+
+    def _dispatch_context(self, ctx: ExecutionContext) -> ExecutionContext:
+        """Return a context advertising an absolute monotonic deadline."""
+        budget = self._timeout_budget()
+        if budget <= 0 or ctx.deadline is not None:
+            return ctx
+        return ctx.model_copy(update={"deadline": time.monotonic() + budget})
+
+    def _run_provider(self, provider, action, ctx) -> tuple[Outcome, bool, str,
+                                                            ProviderErrorCode | None]:
+        budget = self._timeout_budget()
+        dispatch_ctx = self._dispatch_context(ctx)
+
+        # validate -----------------------------------------------------------------
         try:
-            provider.validate(action)
+            run_with_timeout(
+                lambda: provider.validate(action),
+                timeout_seconds=budget, provider_id=provider.id, stage="validate",
+            )
         except ToolError as e:
-            return Outcome.REJECTED, False, str(e)
-        except Exception as e:  # noqa: BLE001 — a buggy provider must not crash the gate
-            return Outcome.REJECTED, False, f"validation error: {type(e).__name__}"
+            # Validation rejection is REJECTED (bad input), not a provider failure.
+            # Preserve the provider's code when it already classifies the rejection,
+            # but never let a non-validation code masquerade as a successful validate.
+            code = e.code if e.code in (
+                ProviderErrorCode.VALIDATION, ProviderErrorCode.FORBIDDEN,
+                ProviderErrorCode.NOT_FOUND, ProviderErrorCode.TIMEOUT,
+            ) else ProviderErrorCode.VALIDATION
+            return Outcome.REJECTED, False, str(e), code
+
+        # execute ------------------------------------------------------------------
         try:
-            result = provider.execute(action, ctx)
+            result = run_with_timeout(
+                lambda: provider.execute(action, dispatch_ctx),
+                timeout_seconds=budget, provider_id=provider.id, stage="execute",
+            )
             if result.success:
-                return Outcome.EXECUTED, True, result.summary
-            return Outcome.FAILED, False, result.summary or "provider returned failure"
+                return Outcome.EXECUTED, True, result.summary, None
+            return (Outcome.FAILED, False, result.summary or "provider returned failure",
+                    ProviderErrorCode.PROVIDER_ERROR)
         except ToolError as e:
-            return Outcome.FAILED, False, str(e)
+            # Timeouts and provider-authored failures are FAILED.
+            outcome = Outcome.FAILED
+            return outcome, False, str(e), e.code
         except Exception as e:  # noqa: BLE001
-            return Outcome.FAILED, False, f"provider error: {type(e).__name__}"
+            return Outcome.FAILED, False, f"provider error: {type(e).__name__}", \
+                ProviderErrorCode.INTERNAL
 
     def _record(self, action, ctx, risk_level, decision, outcome, policy_version,
-                domain, provider_id, credential_ref, confirmation_id=None, result=None):
+                domain, provider_id, credential_ref, confirmation_id=None, result=None,
+                error_code=None):
         with transaction(self.session_factory) as session:
             self.audit_service.record(
                 session, action=action, ctx=ctx, risk_level=risk_level,
                 decision=decision, outcome=outcome, policy_version=policy_version,
-                confirmation_id=confirmation_id, result=result, provider_id=provider_id,
+                confirmation_id=confirmation_id, result=result, error_code=error_code,
+                provider_id=provider_id,
                 capability_domain=domain, credential_ref=credential_ref,
             )

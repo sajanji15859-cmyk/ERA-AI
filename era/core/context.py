@@ -21,3 +21,9 @@ class ExecutionContext(BaseModel):
     actor_id: str
     session_id: str | None = None
     credentials: CredentialScope = Field(default_factory=CredentialScope)
+    #: Optional absolute deadline for the *provider dispatch* phase (Phase 1E),
+    #: as a :func:`time.monotonic` timestamp. ``None`` means no cooperative
+    #: deadline is advertised. The execution service additionally enforces a
+    #: hard wall-clock timeout around providers; this field lets a cooperative
+    #: provider observe remaining budget without holding a DB transaction.
+    deadline: float | None = None

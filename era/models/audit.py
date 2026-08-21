@@ -28,6 +28,9 @@ class AuditLogEntry(Base):
     outcome = Column(String, nullable=False, index=True)
     confirmation_id = Column(String, nullable=True, index=True)
     result = Column(String, nullable=True)
+    #: Stable :class:`~era.core.result.ProviderErrorCode` for FAILED/REJECTED
+    #: provider outcomes (Phase 1E). Null for successes and non-provider denials.
+    error_code = Column(String, nullable=True, index=True)
     provider_id = Column(String, nullable=True)
     capability_domain = Column(String, nullable=True)
     credential_ref = Column(String, nullable=True)
@@ -42,6 +45,6 @@ class AuditLogEntry(Base):
     HASH_FIELDS = (
         "seq", "created_at", "actor_id", "action_type", "action_params",
         "risk_level", "decision", "outcome", "confirmation_id", "result",
-        "provider_id", "capability_domain", "credential_ref", "policy_version",
-        "app_version", "meta", "prev_hash",
+        "error_code", "provider_id", "capability_domain", "credential_ref",
+        "policy_version", "app_version", "meta", "prev_hash",
     )

@@ -113,6 +113,8 @@ pytest
 | GET | `/v1/audit/verify` | hash-chain integrity check |
 | GET | `/v1/policy` | current policy |
 | PUT | `/v1/policy` | new version (audited) |
+| GET | `/v1/providers` | list registered providers (metadata only) |
+| GET | `/v1/providers/{id}` | single provider metadata |
 
 ### Explicitly NOT in Phase 1C
 
@@ -160,3 +162,56 @@ cannot silently weaken the gate.
 **Real providers remain out of scope.** No network calls, no API keys / OAuth /
 passwords, no real email / WhatsApp / booking / payment / device / filesystem
 mutations. Stub-only execution continues.
+
+---
+
+## Phase 1E — Provider integration foundation
+
+Phase 1E does **not** add a real provider. It hardens the *boundary* that every
+future real provider (Web, Email, WhatsApp, Booking, File/Photo, Android) will
+plug into, so a flaky, slow or buggy downstream cannot weaken the security gate.
+
+### What it adds
+
+- **`ProviderErrorCode` + error semantics** — a stable, provider-agnostic error
+  taxonomy (`VALIDATION`, `AUTH`, `FORBIDDEN`, `NOT_FOUND`, `CONFLICT`,
+  `TIMEOUT`, `UNAVAILABLE`, `NOT_IMPLEMENTED`, `PROVIDER_ERROR`, `INTERNAL`).
+  `ToolError` carries a `code` (default `PROVIDER_ERROR` for backward
+  compatibility). Free-text messages are for humans; codes are for the gate,
+  audit log and callers to react to deterministically.
+- **Provider timeout / deadline** — every provider `validate`/`execute` call
+  during dispatch is bounded by a hard wall-clock timeout
+  (`ERA_PROVIDER_TIMEOUT_SECONDS`, default 30s). Overrun becomes
+  `ToolError(TIMEOUT)` recorded as `FAILED`; the abandoned (daemon) worker never
+  blocks the caller. An absolute `time.monotonic()` deadline is advertised on
+  `ExecutionContext.deadline` so cooperative providers can observe remaining
+  budget. Dispatch remains *outside* any DB transaction.
+- **`ProviderInfo` / `describe_provider()`** — static, non-secret provider
+  metadata (`id`, `action_types`, `version`, `display_name`, `is_stub`,
+  `capabilities`). `describe()` is optional on a provider; the helper
+  synthesises a safe default (and survives a buggy `describe()`) so
+  introspection never breaks a legacy provider.
+- **`ToolRegistry` registration/lookup** — providers are now indexed by both
+  `action_type` and provider `id`, with duplicate-provider/duplicate-action
+  rejection, `get_provider(id)`, `provider_ids`, `list_providers()`,
+  `describe(action_type)` and `describe_all()`.
+- **Structured `error_code` in the audit log** — `FAILED`/`REJECTED` outcomes
+  carry the `ProviderErrorCode` in a new indexed column (and hash-chain field),
+  so failures are queryable without string-matching messages.
+- **Read-only `/v1/providers` endpoints** — list / inspect registered providers.
+  No provider is invoked, no network opened, no credentials exposed.
+- **Dispatch-boundary and fail-closed tests** — authorization is durably
+  committed *before* dispatch (audit-before-execute) on both the direct and
+  confirmed paths; `FORBIDDEN` actions never dispatch even with a provider
+  registered and an engine override; missing provider maps to
+  `NOT_IMPLEMENTED`; a provider raising a non-`ToolError` is mapped to
+  `INTERNAL`.
+
+### Explicitly NOT in Phase 1E
+
+**Still no real provider.** No network/HTTP calls, no API keys / OAuth /
+passwords, no real email / WhatsApp / booking / payment / device / filesystem
+mutations. `StubProvider` and `MockLLMProvider` remain the only wired
+implementations. No retries/circuit-breakers, no async provider interface, no
+background workers, and no credential *storage* — providers continue to own
+credential resolution against their own secure stores in later phases.

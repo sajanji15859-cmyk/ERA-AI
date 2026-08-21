@@ -28,6 +28,7 @@ class NewAuditEntry:
     app_version: str
     confirmation_id: str | None = None
     result: str | None = None
+    error_code: str | None = None
     provider_id: str | None = None
     capability_domain: str | None = None
     credential_ref: str | None = None

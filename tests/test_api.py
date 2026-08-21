@@ -65,6 +65,26 @@ def test_audit_list_and_verify(client):
     assert v.json()["valid"] is True
 
 
+def test_providers_listing(client):
+    r = client.get("/v1/providers")
+    assert r.status_code == 200
+    providers = r.json()["providers"]
+    stub = next(p for p in providers if p["id"] == "stub")
+    assert stub["is_stub"] is True
+    assert "stub.noop" in stub["action_types"]
+    # No secret material is ever surfaced.
+    assert "sk-" not in r.text
+    assert "token" not in r.text.lower()
+
+
+def test_provider_detail_and_404(client):
+    r = client.get("/v1/providers/stub")
+    assert r.status_code == 200
+    assert r.json()["id"] == "stub"
+    missing = client.get("/v1/providers/nope")
+    assert missing.status_code == 404
+
+
 def test_policy_get_and_put(client):
     r = client.get("/v1/policy")
     assert r.status_code == 200

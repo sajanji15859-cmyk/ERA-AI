@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 from era.core.llm import LLMRequest, LLMResponse, ToolCall
+from era.core.provider_info import ProviderInfo
 
 
 class MockLLMProvider:
@@ -23,3 +24,15 @@ class MockLLMProvider:
 
     def stream(self, req: LLMRequest) -> Iterator[LLMResponse]:
         yield self.complete(req)
+
+    def describe(self) -> ProviderInfo:
+        # An LLM provider is not a ToolProvider, but it exposes the same
+        # introspection shape so diagnostics/registry listings stay uniform.
+        return ProviderInfo(
+            id=self.id,
+            action_types=frozenset(),
+            version="0.1.0",
+            display_name="Mock LLM (offline)",
+            is_stub=True,
+            capabilities=("complete", "stream"),
+        )
