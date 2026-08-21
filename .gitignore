@@ -19,3 +19,6 @@ htmlcov/
 era.db
 *.db
 *.sqlite3
+
+# Agent workspace (generated artifacts — Phase 3A)
+workspace/

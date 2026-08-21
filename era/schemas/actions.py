@@ -12,11 +12,12 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from era.core.enums import Decision, RiskLevel
 from era.core.result import ActionResult
 from era.security.validation import (
+    MAX_CONTENT_LEN,
     ValidationError_,
     validate_action_type,
     validate_params,
@@ -40,10 +41,20 @@ class ActionRequest(BaseModel):
     @field_validator("params")
     @classmethod
     def _params(cls, v: Any) -> dict[str, Any]:
+        # Shape/structure check with the widest allowed string cap; the
+        # action-aware limit is enforced by the model validator below.
         try:
-            return validate_params(v)
+            return validate_params(v, str_limit=MAX_CONTENT_LEN)
         except ValidationError_ as e:
             raise ValueError(str(e)) from None
+
+    @model_validator(mode="after")
+    def _action_aware_params(self) -> ActionRequest:
+        try:
+            validate_params(self.params, action_type=self.action_type)
+        except ValidationError_ as e:
+            raise ValueError(str(e)) from None
+        return self
 
 
 class EvaluateRequest(BaseModel):
@@ -64,9 +75,17 @@ class EvaluateRequest(BaseModel):
     @classmethod
     def _params(cls, v: Any) -> dict[str, Any]:
         try:
-            return validate_params(v)
+            return validate_params(v, str_limit=MAX_CONTENT_LEN)
         except ValidationError_ as e:
             raise ValueError(str(e)) from None
+
+    @model_validator(mode="after")
+    def _action_aware_params(self) -> EvaluateRequest:
+        try:
+            validate_params(self.params, action_type=self.action_type)
+        except ValidationError_ as e:
+            raise ValueError(str(e)) from None
+        return self
 
 
 class EvaluateResponse(BaseModel):

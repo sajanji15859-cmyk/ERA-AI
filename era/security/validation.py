@@ -17,6 +17,11 @@ MAX_PARAMS = 32
 MAX_PARAM_KEY_LEN = 64
 #: Maximum length of a single string value.
 MAX_STR_LEN = 2000
+#: Actions whose params legitimately carry full file content (Phase 3B).
+#: Their string cap matches the workspace provider's max file bytes.
+CONTENT_ACTIONS: frozenset[str] = frozenset({"fs.write", "photo.edit", "photo.upload"})
+#: String cap for content-bearing params of the actions above.
+MAX_CONTENT_LEN = 1_048_576
 #: Approximate total "characters" budget across the whole params tree.
 MAX_PARAM_TOTAL = 16384
 #: Action type length bound.
@@ -49,21 +54,34 @@ def validate_action_type(value: str) -> str:
     return value
 
 
-def validate_params(params: dict[str, Any]) -> dict[str, Any]:
+def validate_params(params: dict[str, Any], *, action_type: str | None = None,
+                    str_limit: int | None = None) -> dict[str, Any]:
     """Deep-validate action params: types, names, sizes, and total budget.
 
     Returns the dict unchanged on success; raises :class:`ValidationError_` on
     any violation. Supports JSON-compatible scalars and nested dict/list only —
     anything else is rejected.
+
+    ``action_type`` selects the string cap: content-bearing actions
+    (``fs.write`` / ``photo.edit`` / ``photo.upload``) may carry full file
+    content (bounded by the workspace provider cap); every other action keeps
+    the strict :data:`MAX_STR_LEN` bound (Phase 3B).
     """
     if not isinstance(params, dict):
         raise ValidationError_("params must be a JSON object")
     budget = MAX_PARAM_TOTAL
-    _walk(params, 0, budget)
+    limit = str_limit if str_limit is not None else _string_limit_for(action_type)
+    _walk(params, 0, budget, limit)
     return params
 
 
-def _walk(value: Any, depth: int, budget: int) -> int:
+def _string_limit_for(action_type: str | None) -> int:
+    if action_type in CONTENT_ACTIONS:
+        return MAX_CONTENT_LEN
+    return MAX_STR_LEN
+
+
+def _walk(value: Any, depth: int, budget: int, str_limit: int) -> int:
     """Return an approximate character count of ``value``, validating bounds.
 
     ``budget`` is a soft guard; we accumulate a running total via the caller and
@@ -72,7 +90,7 @@ def _walk(value: Any, depth: int, budget: int) -> int:
     if depth > 4:
         raise ValidationError_("params nesting too deep")
     if isinstance(value, str):
-        if len(value) > MAX_STR_LEN:
+        if len(value) > str_limit:
             raise ValidationError_("string parameter value too long")
         return len(value)
     if isinstance(value, bool):
@@ -88,12 +106,12 @@ def _walk(value: Any, depth: int, budget: int) -> int:
         for k, v in value.items():
             if not isinstance(k, str) or not k or len(k) > MAX_PARAM_KEY_LEN:
                 raise ValidationError_("invalid parameter name")
-            total += _walk(v, depth + 1, budget)
+            total += _walk(v, depth + 1, budget, str_limit)
         return total
     if isinstance(value, (list, tuple)):
         if len(value) > MAX_PARAMS:
             raise ValidationError_("too many list elements")
-        return sum(_walk(x, depth + 1, budget) for x in value)
+        return sum(_walk(x, depth + 1, budget, str_limit) for x in value)
     raise ValidationError_("unsupported parameter value type")
 
 

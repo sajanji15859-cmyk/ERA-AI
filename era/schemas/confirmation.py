@@ -11,10 +11,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from era.core.enums import Decision, RiskLevel
 from era.security.validation import (
+    MAX_CONTENT_LEN,
     ValidationError_,
     validate_action_type,
     validate_challenge,
@@ -41,9 +42,19 @@ class ApproveRequest(BaseModel):
     @classmethod
     def _params(cls, v: Any) -> dict[str, Any]:
         try:
-            return validate_params(v)
+            return validate_params(v, str_limit=MAX_CONTENT_LEN)
         except ValidationError_ as e:
             raise ValueError(str(e)) from None
+
+    @model_validator(mode="after")
+    def _action_aware_params(self) -> ApproveRequest:
+        # Approval must resubmit the exact authorized action (hash-bound), so
+        # content-bearing writes are allowed their full content cap here.
+        try:
+            validate_params(self.params, action_type=self.action_type)
+        except ValidationError_ as e:
+            raise ValueError(str(e)) from None
+        return self
 
     @field_validator("challenge")
     @classmethod

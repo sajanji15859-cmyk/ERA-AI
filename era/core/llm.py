@@ -37,6 +37,9 @@ class ToolCall(BaseModel):
 class LLMResponse(BaseModel):
     text: str = ""
     tool_calls: list[ToolCall] = Field(default_factory=list)
+    #: Provider-reported token usage (e.g. {"total_tokens": 123}), used by the
+    #: agent budget for cost control. Optional — added in Phase 3A.
+    usage: dict[str, Any] | None = None
 
 
 @runtime_checkable

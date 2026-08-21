@@ -46,7 +46,33 @@ class Settings(BaseSettings):
     #: Max accepted HTTP request body (bytes) for hardening (Phase 2A).
     max_request_body_bytes: int = 262144
 
-    app_version: str = "0.2.0"
+    # --- Phase 3A: agent (MVEA) settings -------------------------------------
+    #: Build the agent-enabled container (real providers + agent routes).
+    agent_enabled: bool = False
+    #: Sandbox root for all agent file operations (relative to the CWD).
+    agent_workspace_root: str = "workspace"
+    #: Agent loop caps (all enforced in code — an endless loop is impossible).
+    agent_max_iterations: int = 25
+    agent_max_tool_calls: int = 40
+    agent_run_timeout_seconds: float = 900.0
+    agent_max_retries_per_task: int = 2
+    agent_max_llm_calls: int = 20
+    agent_cost_cap_usd: float = 0.10
+    #: LLM wiring. Empty/"none"/"off" = offline deterministic mode (free).
+    #: "openai" = any OpenAI-compatible chat/completions endpoint.
+    agent_llm_provider: str = ""
+    agent_llm_base_url: str = "https://api.openai.com/v1"
+    agent_llm_model: str = "gpt-4o-mini"
+    #: Env-only. Never commit a real key; with no key the agent runs offline.
+    agent_llm_api_key: str = ""
+    agent_llm_max_tokens: int = 2048
+    #: Provider caps.
+    workspace_max_file_bytes: int = 1_048_576
+    web_max_fetch_bytes: int = 2_097_152
+    web_timeout_seconds: float = 15.0
+    web_user_agent: str = "ERA-Agent/0.3"
+
+    app_version: str = "0.3.0"
 
     # Note: a missing/malformed policy is always DENY-all (hard fail-closed).
     # This is intentionally not configurable — weakening it is a footgun.

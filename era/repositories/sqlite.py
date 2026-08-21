@@ -5,7 +5,15 @@ from __future__ import annotations
 from sqlalchemy import select
 
 from era.core.util import utcnow_iso
-from era.models import ApiKey, AuditLogEntry, PendingConfirmation, PolicyVersion, User
+from era.models import (
+    AgentRun,
+    ApiKey,
+    AuditLogEntry,
+    MemoryEntry,
+    PendingConfirmation,
+    PolicyVersion,
+    User,
+)
 from era.repositories.base import NewAuditEntry, VerifyResult
 from era.security.hashing import canonical_json, sha256_hex
 
@@ -72,12 +80,15 @@ class SQLiteAuditRepo:
 
     # -- read -----------------------------------------------------------------
     def list(self, session, *, limit: int = 100, offset: int = 0,
-             action_type: str | None = None, outcome: str | None = None) -> list[AuditLogEntry]:
+             action_type: str | None = None, outcome: str | None = None,
+             confirmation_id: str | None = None) -> list[AuditLogEntry]:
         stmt = select(AuditLogEntry).order_by(AuditLogEntry.seq).limit(limit).offset(offset)
         if action_type is not None:
             stmt = stmt.where(AuditLogEntry.action_type == action_type)
         if outcome is not None:
             stmt = stmt.where(AuditLogEntry.outcome == outcome)
+        if confirmation_id is not None:
+            stmt = stmt.where(AuditLogEntry.confirmation_id == confirmation_id)
         return list(session.execute(stmt).scalars().all())
 
     def get(self, session, entry_id: int) -> AuditLogEntry | None:
@@ -193,3 +204,62 @@ class SQLiteApiKeyRepo:
     def list(self, session) -> list[ApiKey]:
         stmt = select(ApiKey).order_by(ApiKey.created_at)
         return list(session.execute(stmt).scalars().all())
+
+
+class SQLiteAgentRunRepo:
+    """Agent run persistence (Phase 3A)."""
+
+    def create(self, session, run: AgentRun) -> AgentRun:
+        session.add(run)
+        session.flush()
+        return run
+
+    def get(self, session, run_id: str) -> AgentRun | None:
+        return session.get(AgentRun, run_id)
+
+    def update(self, session, run: AgentRun) -> AgentRun:
+        session.add(run)
+        session.flush()
+        return run
+
+    def list_by_actor(self, session, actor_id: str, *, limit: int = 50) -> list[AgentRun]:
+        stmt = (select(AgentRun).where(AgentRun.actor_id == actor_id)
+                .order_by(AgentRun.created_at.desc()).limit(limit))
+        return list(session.execute(stmt).scalars().all())
+
+
+class SQLiteMemoryRepo:
+    """Long-term agent memory storage (Phase 3A)."""
+
+    def create(self, session, entry: MemoryEntry) -> MemoryEntry:
+        session.add(entry)
+        session.flush()
+        return entry
+
+    def get(self, session, actor_id: str, namespace: str, key: str) -> MemoryEntry | None:
+        stmt = select(MemoryEntry).where(
+            MemoryEntry.actor_id == actor_id,
+            MemoryEntry.namespace == namespace,
+            MemoryEntry.key == key,
+        )
+        return session.execute(stmt).scalars().first()
+
+    def update(self, session, entry: MemoryEntry) -> MemoryEntry:
+        session.add(entry)
+        session.flush()
+        return entry
+
+    def list_namespace(self, session, actor_id: str, namespace: str) -> list[MemoryEntry]:
+        stmt = (select(MemoryEntry).where(
+            MemoryEntry.actor_id == actor_id,
+            MemoryEntry.namespace == namespace,
+        ).order_by(MemoryEntry.updated_at))
+        return list(session.execute(stmt).scalars().all())
+
+    def delete(self, session, actor_id: str, namespace: str, key: str) -> bool:
+        entry = self.get(session, actor_id, namespace, key)
+        if entry is None:
+            return False
+        session.delete(entry)
+        session.flush()
+        return True

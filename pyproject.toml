@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "era-ai"
-version = "0.2.0"
-description = "ERA AI — Phase 2A foundation security (authn/authz/identity/input hardening)"
+version = "0.3.0"
+description = "ERA AI — autonomous agent (Phase 3A/3B: loop, tools, memory, verification, LLM, streaming)"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
