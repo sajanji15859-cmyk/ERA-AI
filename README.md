@@ -232,7 +232,8 @@ provider `execute` only:
 
 - **Only explicitly retryable failures are retried** — by default
   `UNAVAILABLE` and `PROVIDER_ERROR`. `VALIDATION`, `AUTH`, `FORBIDDEN`,
-  `NOT_FOUND`, `CONFLICT`, `TIMEOUT`, `NOT_IMPLEMENTED` and `INTERNAL` are
+  `NOT_FOUND`, `CONFLICT`, `TIMEOUT`, `NOT_IMPLEMENTED`, `INTERNAL` and
+  `UNKNOWN` (an out-of-taxonomy code string, classified by `ToolError`) are
   never retried (a hard carve-out that configuration cannot override).
 - **Bounded** — `max_attempts` (default 3) is hard-capped at 10; the loop is a
   plain `for`, so it can never run unboundedly.
@@ -258,9 +259,10 @@ A small, deterministic per-provider breaker with `CLOSED` / `OPEN` /
   controlled `HALF_OPEN` probe is admitted. A successful probe closes the
   circuit; a failed probe reopens it.
 - `AUTH`, `FORBIDDEN`, `VALIDATION`, `NOT_FOUND`, `CONFLICT`, `TIMEOUT`,
-  `NOT_IMPLEMENTED` and `INTERNAL` failures **never** affect breaker state —
-  authorization/policy failures can never be converted into circuit-breaker
-  behavior.
+  `NOT_IMPLEMENTED`, `INTERNAL` and `UNKNOWN` failures **never** affect
+  breaker state — authorization/policy failures can never be converted into
+  circuit-breaker behavior, and an unrecognized failure is never mistaken for
+  a transient outage.
 - Breakers are isolated per provider id (`CircuitBreakerRegistry`), so one
   provider's outage never blocks another.
 - The breaker is consulted only by the execution service **after** the
@@ -276,9 +278,15 @@ An additive extension point for asynchronous providers:
 - `to_async()` / `to_sync()` adapters: existing synchronous providers
   (`StubProvider`) work from async code unchanged, and async providers can be
   driven through the existing synchronous dispatch boundary. `ExecutionContext`
-  — including the Phase 1E deadline — is forwarded untouched.
+  — including the Phase 1E deadline — is forwarded untouched. The registry
+  adapts async providers automatically at registration
+  (`ToolRegistry.register`), so an `AsyncToolProvider` can be wired straight
+  into `build_container`; both adapters forward `describe()` so provider
+  introspection metadata survives adaptation, and awaitable-returning /
+  mixed sync-async providers are handled without leaking coroutine objects.
 - `run_async_with_timeout()` — the async counterpart of `run_with_timeout()`
-  (overrun → `ToolError(TIMEOUT)`, never retried).
+  (overrun → `ToolError(TIMEOUT)`, never retried; any other unexpected
+  exception → `ToolError(INTERNAL)`, mirroring the sync boundary).
 - No real async provider ships; nothing here opens a socket or stores
   credentials.
 

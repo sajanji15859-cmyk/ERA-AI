@@ -10,6 +10,7 @@ reliability surface.
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 from era.core.action import Action
@@ -588,3 +589,145 @@ def test_no_secret_leakage_in_circuit_open_surface(tmp_path):
     failed = [e for e in _audit(c) if e.outcome == "FAILED"]
     assert failed[-1].error_code == ProviderErrorCode.UNAVAILABLE.value
     assert "sk-LEAK-123" not in (failed[-1].result or "")
+
+
+# ---------------------------------------------------------------------------
+# async providers through the container (registration-time adaptation)
+# ---------------------------------------------------------------------------
+
+class AsyncFlaky:
+    """Genuinely-async provider: UNAVAILABLE on the first execute, then success."""
+
+    id = "async-flaky"
+    action_types = frozenset({"stub.noop"})
+
+    def __init__(self):
+        self.calls = 0
+
+    async def validate(self, action):
+        await asyncio.sleep(0)
+
+    async def execute(self, action, ctx):
+        await asyncio.sleep(0)
+        self.calls += 1
+        if self.calls == 1:
+            raise ToolError("async outage", code=ProviderErrorCode.UNAVAILABLE)
+        return ActionResult(success=True, summary="async recovered")
+
+
+class AsyncAlwaysDown:
+    """Always fails with UNAVAILABLE, async-native."""
+
+    id = "async-down"
+    action_types = frozenset({"stub.noop"})
+
+    def __init__(self):
+        self.calls = 0
+
+    async def validate(self, action):
+        await asyncio.sleep(0)
+
+    async def execute(self, action, ctx):
+        await asyncio.sleep(0)
+        self.calls += 1
+        raise ToolError("async 503", code=ProviderErrorCode.UNAVAILABLE)
+
+
+def test_async_provider_registered_directly_dispatches_end_to_end(tmp_path):
+    # An AsyncToolProvider wired straight into build_container must work: the
+    # registry adapts it to the sync SPI, so the reliability layer (timeout,
+    # retry, breaker, audit) treats it exactly like a synchronous provider.
+    provider = AsyncFlaky()
+    c = make_container(tmp_path, providers=[provider])
+    _no_backoff(c)
+
+    resp = _request(c, action("stub.noop"))
+    assert resp.status == "executed"
+    assert provider.calls == 2  # UNAVAILABLE retried once through the adapter
+
+    entries = _audit(c)
+    assert [e.outcome for e in entries] == ["AUTHORIZED", "EXECUTED"]
+    assert entries[-1].error_code is None
+
+
+def test_async_provider_breaker_opens_and_blocks(tmp_path):
+    provider = AsyncAlwaysDown()
+    c = make_container(tmp_path, providers=[provider])
+    _no_backoff(c, max_attempts=1)
+    reg = _breaker_registry(c, threshold=1, cooldown=999.0)
+
+    r1 = _request(c, action("stub.noop"))
+    assert r1.status == "failed"
+    assert reg.get("async-down").state.value == "OPEN"
+
+    r2 = _request(c, action("stub.noop"))
+    assert r2.status == "failed"
+    assert provider.calls == 1  # OPEN blocked dispatch: adapter never invoked
+    assert "circuit open" in (r2.message or "")
+
+    failed = [e for e in _audit(c) if e.outcome == "FAILED"]
+    assert failed[-1].error_code == ProviderErrorCode.UNAVAILABLE.value
+
+
+def test_async_provider_forbidden_never_dispatches(tmp_path):
+    class AsyncForbiddenCapable:
+        id = "async-forbidden"
+        action_types = frozenset({"secret.export"})
+
+        def __init__(self):
+            self.calls = 0
+
+        async def validate(self, action):
+            await asyncio.sleep(0)
+
+        async def execute(self, action, ctx):
+            await asyncio.sleep(0)
+            self.calls += 1
+            return ActionResult(success=True)
+
+    provider = AsyncForbiddenCapable()
+    c = make_container(tmp_path, providers=[provider])
+    _no_backoff(c)
+
+    resp = _request(c, action("secret.export"))
+    assert resp.status == "denied"
+    assert resp.decision == Decision.DENY
+    assert provider.calls == 0  # FORBIDDEN never reaches the adapter
+
+    entries = _audit(c)
+    assert entries[-1].outcome == Outcome.DENIED_BY_POLICY.value
+
+
+def test_unknown_provider_error_codes_never_retried_or_tripped(tmp_path):
+    class AsyncWeird:
+        id = "async-weird"
+        action_types = frozenset({"stub.noop"})
+
+        def __init__(self):
+            self.calls = 0
+
+        async def validate(self, action):
+            await asyncio.sleep(0)
+
+        async def execute(self, action, ctx):
+            await asyncio.sleep(0)
+            self.calls += 1
+            raise ToolError("vendor oddity", code="VENDOR_SPECIFIC_WAT")
+
+    provider = AsyncWeird()
+    c = make_container(tmp_path, providers=[provider])
+    _no_backoff(c, max_attempts=5)
+    reg = _breaker_registry(c, threshold=1, cooldown=999.0)
+    breaker = reg.get("async-weird")
+
+    for _ in range(3):  # far beyond a threshold of 1
+        resp = _request(c, action("stub.noop"))
+        assert resp.status == "failed"
+
+    # Out-of-taxonomy codes are UNKNOWN: never retried, never breaker-eligible.
+    assert provider.calls == 3  # exactly one attempt per request
+    assert breaker.state.value == "CLOSED"
+    assert breaker.consecutive_failures == 0
+
+    failed = [e for e in _audit(c) if e.outcome == "FAILED"]
+    assert failed[-1].error_code == ProviderErrorCode.UNKNOWN.value

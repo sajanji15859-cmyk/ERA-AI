@@ -15,10 +15,15 @@ Provided:
   without modification, and async providers can be driven through the existing
   synchronous dispatch boundary. ``ExecutionContext`` (including
   ``ctx.deadline``) is passed through unchanged, preserving Phase 1E deadline
-  semantics.
+  semantics. Both adapters forward ``describe()`` so introspection metadata
+  survives adaptation, and ``ToolRegistry.register`` adapts async providers
+  automatically — an ``AsyncToolProvider`` can be wired into the container
+  directly.
 * :func:`run_async_with_timeout` — the async counterpart of
   :func:`era.core.timeout.run_with_timeout`: a hard wall-clock deadline that
-  converts overrun into ``ToolError(TIMEOUT)`` and never retries.
+  converts overrun into ``ToolError(TIMEOUT)`` (never retried) and wraps any
+  other unexpected exception as ``ToolError(INTERNAL)``, mirroring the
+  synchronous boundary's error semantics.
 
 NOTE: the synchronous adapters run blocking provider code on the calling
 thread/event loop. That is intentional for compatibility and tests; real async
@@ -33,6 +38,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from era.core.action import Action
 from era.core.context import ExecutionContext
+from era.core.provider_info import ProviderInfo
 from era.core.result import ActionResult, ProviderErrorCode, ToolError
 from era.core.tool_provider import ToolProvider
 
@@ -61,10 +67,23 @@ def is_async_provider(obj: Any) -> bool:
 
     ``runtime_checkable`` ``isinstance`` cannot distinguish async from sync
     methods (it only checks attribute presence), so adapters use this check to
-    avoid double-wrapping.
+    avoid double-wrapping. Covers plain coroutine methods, ``functools.partial``
+    wrappers (which ``inspect.iscoroutinefunction`` unwraps) and callable
+    objects whose ``__call__`` is a coroutine function.
     """
     execute = getattr(obj, "execute", None)
-    return callable(execute) and inspect.iscoroutinefunction(execute)
+    if not callable(execute):
+        return False
+    if inspect.iscoroutinefunction(execute):
+        return True
+    # Callable objects (e.g. a class with ``async def __call__``) are not
+    # detected by ``iscoroutinefunction`` on the instance; check the type's
+    # ``__call__`` implementation instead.
+    try:
+        call_impl = type(execute).__call__
+    except AttributeError:
+        return False
+    return inspect.iscoroutinefunction(call_impl)
 
 
 class SyncToAsyncProviderAdapter:
@@ -74,7 +93,10 @@ class SyncToAsyncProviderAdapter:
     sync methods execute on the caller's event loop (blocking it); this is a
     compatibility/test bridge — real async providers implement
     ``AsyncToolProvider`` directly. ``ctx`` (including ``ctx.deadline``) is
-    forwarded untouched.
+    forwarded untouched. If a wrapped method returns an awaitable (e.g. a
+    callable-object provider that :func:`is_async_provider` cannot classify
+    statically), it is awaited so callers always receive the value — never a
+    leaked coroutine object.
     """
 
     def __init__(self, provider: ToolProvider):
@@ -83,10 +105,20 @@ class SyncToAsyncProviderAdapter:
         self.action_types = provider.action_types
 
     async def validate(self, action: Action) -> None:
-        return self._provider.validate(action)
+        result = self._provider.validate(action)
+        if inspect.isawaitable(result):
+            await result
 
     async def execute(self, action: Action, ctx: ExecutionContext) -> ActionResult:
-        return self._provider.execute(action, ctx)
+        result = self._provider.execute(action, ctx)
+        if inspect.isawaitable(result):
+            result = await result
+        return result
+
+    def describe(self) -> ProviderInfo | None:
+        """Forward introspection to the wrapped provider (if implemented)."""
+        describe = getattr(self._provider, "describe", None)
+        return describe() if callable(describe) else None
 
 
 class AsyncToSyncProviderAdapter:
@@ -95,7 +127,9 @@ class AsyncToSyncProviderAdapter:
     Each call runs a fresh event loop via :func:`asyncio.run`, so an async
     provider can be driven through the existing synchronous dispatch boundary
     (including the Phase 1E timeout and the Phase 1F reliability layer).
-    ``ctx`` (including ``ctx.deadline``) is forwarded untouched.
+    ``ctx`` (including ``ctx.deadline``) is forwarded untouched. Mixed
+    providers (e.g. a synchronous ``validate`` with an async ``execute``) are
+    handled: only awaitable results are run through ``asyncio.run``.
     """
 
     def __init__(self, provider: AsyncToolProvider):
@@ -104,10 +138,20 @@ class AsyncToSyncProviderAdapter:
         self.action_types = provider.action_types
 
     def validate(self, action: Action) -> None:
-        asyncio.run(self._provider.validate(action))
+        result = self._provider.validate(action)
+        if inspect.isawaitable(result):
+            asyncio.run(result)
 
     def execute(self, action: Action, ctx: ExecutionContext) -> ActionResult:
-        return asyncio.run(self._provider.execute(action, ctx))
+        result = self._provider.execute(action, ctx)
+        if inspect.isawaitable(result):
+            result = asyncio.run(result)
+        return result
+
+    def describe(self) -> ProviderInfo | None:
+        """Forward introspection to the wrapped provider (if implemented)."""
+        describe = getattr(self._provider, "describe", None)
+        return describe() if callable(describe) else None
 
 
 def to_async(provider: Any) -> Any:
@@ -143,7 +187,9 @@ async def run_async_with_timeout(
 
     Overrun raises ``ToolError(TIMEOUT)`` — which the retry layer never retries.
     ``timeout_seconds`` <= 0 disables the deadline (stub/test paths). A
-    ``ToolError`` raised by the callable itself propagates unchanged.
+    ``ToolError`` raised by the callable itself propagates unchanged; any other
+    unexpected exception is wrapped as ``ToolError(INTERNAL)``, mirroring the
+    synchronous :func:`era.core.timeout.run_with_timeout`.
     """
     if timeout_seconds is None or timeout_seconds <= 0:
         return await call()
@@ -155,4 +201,12 @@ async def run_async_with_timeout(
             f"provider {stage} timed out after {timeout_seconds:g}s",
             provider_id=provider_id,
             code=ProviderErrorCode.TIMEOUT,
+        ) from exc
+    except Exception as exc:
+        if isinstance(exc, ToolError):
+            raise
+        raise ToolError(
+            f"provider {stage} error: {type(exc).__name__}",
+            provider_id=provider_id,
+            code=ProviderErrorCode.INTERNAL,
         ) from exc

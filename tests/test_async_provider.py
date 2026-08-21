@@ -8,6 +8,7 @@ adaptation preserve ExecutionContext (including the Phase 1E deadline).
 from __future__ import annotations
 
 import asyncio
+import functools
 
 import pytest
 
@@ -25,6 +26,7 @@ from era.core.context import ExecutionContext
 from era.core.provider_info import ProviderInfo
 from era.core.result import ActionResult, ProviderErrorCode, ToolError
 from era.core.tool_provider import ToolProvider
+from era.core.tool_registry import ToolRegistry
 from era.providers.stub import StubProvider
 from tests.provider_contract import assert_provider_contract
 
@@ -237,3 +239,142 @@ def test_run_async_with_timeout_zero_disables_deadline():
         return "ok"
 
     assert asyncio.run(run_async_with_timeout(ok, timeout_seconds=0)) == "ok"
+
+
+def test_run_async_with_timeout_wraps_unexpected_exception():
+    # Mirror of the synchronous run_with_timeout: an unexpected (non-ToolError)
+    # exception becomes ToolError(INTERNAL) with the provider id attached, so
+    # the async boundary has the same stable error semantics.
+    async def boom():
+        raise ValueError("raw provider bug")
+
+    with pytest.raises(ToolError) as exc:
+        asyncio.run(run_async_with_timeout(boom, timeout_seconds=1.0, provider_id="p"))
+    assert exc.value.code is ProviderErrorCode.INTERNAL
+    assert exc.value.provider_id == "p"
+    assert "ValueError" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# adapter robustness: awaitable returns, mixed providers, detection
+# ---------------------------------------------------------------------------
+
+def test_sync_to_async_awaits_awaitable_return():
+    # A provider whose ``execute`` is NOT a coroutine function but returns an
+    # awaitable (callable-object style) cannot be classified statically; the
+    # adapter must still deliver the value, never a leaked coroutine object.
+    class AwaitableReturning:
+        id = "await-return"
+        action_types = frozenset({"stub.noop"})
+
+        def validate(self, action):
+            return None
+
+        def execute(self, action, ctx):
+            async def _inner():
+                return ActionResult(success=True, summary="inner")
+
+            return _inner()
+
+    provider = AwaitableReturning()
+    assert not is_async_provider(provider)  # statically indistinguishable
+    wrapped = to_async(provider)
+    result = asyncio.run(wrapped.execute(_noop_action(), ExecutionContext(actor_id="t")))
+    assert isinstance(result, ActionResult)
+    assert result.success is True
+    assert result.summary == "inner"
+
+
+def test_is_async_provider_detects_callable_object_execute():
+    # ``execute`` is a callable object whose ``__call__`` is a coroutine
+    # function: iscoroutinefunction on the instance alone misses this shape.
+    class CallableExecute:
+        id = "callable-exec"
+        action_types = frozenset({"stub.noop"})
+
+        class _Execute:
+            async def __call__(self, action, ctx):
+                await asyncio.sleep(0)
+                return ActionResult(success=True, summary="callable")
+
+        def __init__(self):
+            self.execute = self._Execute()
+
+        def validate(self, action):
+            return None
+
+    provider = CallableExecute()
+    assert is_async_provider(provider)
+    result = to_sync(provider).execute(_noop_action(), ExecutionContext(actor_id="t"))
+    assert result.success is True
+    assert result.summary == "callable"
+
+
+def test_to_sync_adapts_partial_wrapped_async_execute():
+    async def _execute(action, ctx):
+        return ActionResult(success=True, summary="partial")
+
+    class PartialAsync:
+        id = "partial-async"
+        action_types = frozenset({"stub.noop"})
+
+        def validate(self, action):
+            return None
+
+    provider = PartialAsync()
+    provider.execute = functools.partial(_execute)
+    assert is_async_provider(provider)  # iscoroutinefunction unwraps partials
+    result = to_sync(provider).execute(_noop_action(), ExecutionContext(actor_id="t"))
+    assert result.success is True
+    assert result.summary == "partial"
+
+
+def test_async_to_sync_handles_mixed_provider():
+    # Async execute with a synchronous validate: the adapter must not try to
+    # asyncio.run() a plain (non-awaitable) validate result.
+    class Mixed:
+        id = "mixed"
+        action_types = frozenset({"stub.noop"})
+
+        def validate(self, action):
+            return None
+
+        async def execute(self, action, ctx):
+            await asyncio.sleep(0)
+            return ActionResult(success=True, summary="mixed")
+
+    wrapped = to_sync(Mixed())
+    wrapped.validate(_noop_action())  # must not raise TypeError
+    result = wrapped.execute(_noop_action(), ExecutionContext(actor_id="t"))
+    assert result.success is True
+    assert result.summary == "mixed"
+
+
+# ---------------------------------------------------------------------------
+# introspection survives adaptation + registry normalization
+# ---------------------------------------------------------------------------
+
+def test_adapters_forward_describe():
+    info = to_sync(AsyncEcho()).describe()
+    assert info is not None
+    assert info.id == "async-echo"
+    assert info.version == "0.1.0"
+    assert info.is_stub is True
+
+    info2 = to_async(StubProvider()).describe()
+    assert info2 is not None
+    assert info2.id == "stub"
+
+
+def test_registry_normalizes_async_provider_to_sync_spi():
+    registry = ToolRegistry()
+    registry.register(AsyncEcho())  # async provider registered directly
+
+    provider = registry.get("stub.noop")
+    assert provider is not None
+    assert not is_async_provider(provider)  # normalized to the sync SPI
+    result = provider.execute(_noop_action(), ExecutionContext(actor_id="t"))
+    assert result.success is True
+
+    infos = {i.id: i for i in registry.describe_all()}
+    assert infos["async-echo"].version == "0.1.0"  # describe() forwarded
