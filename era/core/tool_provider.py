@@ -35,5 +35,14 @@ class ToolProvider(Protocol):
         """Perform the action. Raise :class:`ToolError` on failure.
 
         Must resolve credentials from its own store (never from ``ctx`` values
-        or params) and must not return secrets in the result.
+        or params) and must not return secrets in the result. Providers SHOULD
+        observe ``ctx.deadline`` (when advertised) and return promptly; the
+        execution service enforces a hard wall-clock timeout regardless.
         """
+
+    # NOTE: ``describe() -> ProviderInfo`` is an OPTIONAL method. It is not
+    # declared on this Protocol because ``runtime_checkable`` requires a method
+    # to exist on every instance for ``isinstance`` to pass, which would break
+    # providers that predate introspection.
+    # :func:`era.core.provider_info.describe_provider` discovers it via getattr
+    # and synthesises a safe default when absent.

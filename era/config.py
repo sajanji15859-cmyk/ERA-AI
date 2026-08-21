@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     # Append-only hash chain.
     audit_genesis_hash: str = "0" * 64
 
+    # Hard wall-clock budget (seconds) for a single provider validate/execute
+    # call during the dispatch phase (Phase 1E). Overrun -> ToolError(TIMEOUT),
+    # recorded as FAILED. 0 disables the hard timeout (used only by tests/stub).
+    provider_timeout_seconds: float = 30.0
+
     app_version: str = "0.1.0"
 
     # Note: a missing/malformed policy is always DENY-all (hard fail-closed).

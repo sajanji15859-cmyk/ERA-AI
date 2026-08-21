@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "era-ai"
 version = "0.1.0"
-description = "ERA AI — Phase 1D permission-matrix hardening and provider contracts"
+description = "ERA AI — Phase 1E provider integration foundation"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

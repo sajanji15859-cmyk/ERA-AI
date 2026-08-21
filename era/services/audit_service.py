@@ -27,6 +27,7 @@ class AuditService:
                risk_level: RiskLevel | str | None, decision: Decision,
                outcome: Outcome, policy_version: int,
                confirmation_id: str | None = None, result: str | None = None,
+               error_code: str | None = None,
                provider_id: str | None = None, capability_domain: str | None = None,
                credential_ref: str | None = None) -> AuditLogEntry:
         spec = self.catalog.get(action.action_type)
@@ -42,6 +43,7 @@ class AuditService:
             app_version=self.settings.app_version,
             confirmation_id=confirmation_id,
             result=result,
+            error_code=error_code,
             provider_id=provider_id,
             capability_domain=capability_domain,
             credential_ref=credential_ref,
