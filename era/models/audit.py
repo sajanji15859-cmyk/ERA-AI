@@ -39,6 +39,12 @@ class AuditLogEntry(Base):
     meta = Column(JSON, nullable=False, default=dict)  # "metadata" is reserved in SQLAlchemy
     prev_hash = Column(String, nullable=False)
     entry_hash = Column(String, nullable=False)
+    # Phase 3F: a keyed signature authenticates the otherwise-recomputable
+    # hash chain. Nullable only so pre-3F rows can be migrated and verified in
+    # explicit legacy (unsigned) mode.
+    signing_algorithm = Column(String, nullable=True)
+    signing_key_id = Column(String, nullable=True)
+    signature = Column(String, nullable=True)
 
     # Canonical field order used for hash-chain serialization. Must match
     # AuditRepo.verify() exactly.

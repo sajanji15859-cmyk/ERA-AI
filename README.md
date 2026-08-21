@@ -644,5 +644,67 @@ ruff check .    # clean
 ### Explicitly NOT in Phase 3E
 
 No new backend capability (the agent/LLM/tools/approval gate are unchanged);
-no WebSocket (SSE already suffices); no multi-user realtime/push; no
-Postgres/rate-limiting/audit signing — those remain Phase 3F.
+no WebSocket (SSE already suffices); no multi-user realtime/push. PostgreSQL,
+rate limiting, audit signing, migrations, and durable circuit state are delivered
+in Phase 3F below.
+
+---
+
+## Phase 3F: Production Scale & Integrity (delivered)
+
+Phase 3F replaces single-node persistence assumptions with a PostgreSQL-ready,
+migration-managed backend while preserving SQLite for local/offline operation.
+
+### What it provides
+
+- **PostgreSQL repositories** — `era/repositories/postgres.py` implements every
+  repository protocol (audit, confirmations, policy, users/API keys, vault,
+  agent runs, memory, and circuit state). `ERA_DATABASE_URL` selects SQLite or
+  PostgreSQL automatically. Concurrent PostgreSQL audit appends are serialized
+  with a transaction-scoped advisory lock so `seq` and `prev_hash` cannot fork.
+- **Alembic schema lifecycle** — startup upgrades to Alembic `head`; ORM
+  `create_all()` is no longer used. Fresh databases migrate from zero, while a
+  pre-Alembic ERA database is baseline-stamped and upgraded without deleting
+  data. Operators can run `alembic upgrade head` / `alembic downgrade <rev>`.
+- **Keyed audit authentication** — `era/security/signing.py` supports
+  HMAC-SHA-256 and Ed25519. Every signed row binds its chain head, algorithm,
+  and key id; `/v1/audit/verify` checks both the SHA-256 links and signatures.
+  Key material stays outside the DB. `none` is explicit legacy mode.
+- **API abuse throttling** — versioned API routes use fixed-window limits.
+  Authenticated calls consume independent API-key and source-IP buckets;
+  unauthenticated calls are constrained by IP. HTTP 429 includes `Retry-After`
+  and rate-limit headers, and still receives all security headers.
+- **Persistent circuit breakers** — provider state, failure streak, and
+  wall-clock open time are stored in the selected database, so OPEN/HALF_OPEN
+  survives process restart and is visible to fresh workers.
+
+### Configure and migrate
+
+```bash
+# PostgreSQL (bare postgresql:// URLs are normalized to psycopg 3)
+export ERA_DATABASE_URL='postgresql://era:password@localhost:5432/era'
+
+# Recommended production audit signing (use a secret manager in practice)
+export ERA_AUDIT_SIGNING_ALGORITHM=hmac-sha256
+export ERA_AUDIT_SIGNING_KEY='replace-with-at-least-32-random-bytes'
+export ERA_AUDIT_SIGNING_KEY_ID='audit-2026-01'
+
+alembic upgrade head
+uvicorn era.main:create_app --factory
+```
+
+Ed25519 accepts a PEM private key (literal newlines or escaped `\\n`) or a raw
+32-byte private seed encoded as hex/base64. A public-only
+`Ed25519AuditSigner` can verify exported audit records independently.
+
+For the optional live integration suite, point
+`ERA_TEST_POSTGRES_URL` at a PostgreSQL database; tests create and drop an
+isolated schema and do not alter existing schemas.
+
+### Test
+
+```bash
+pytest  # 546 passed, 1 live-Postgres test skipped unless URL is configured
+ERA_TEST_POSTGRES_URL='postgresql://...' pytest -m postgres
+ruff check .
+```

@@ -19,8 +19,14 @@ class Settings(BaseSettings):
     confirmation_ttl_seconds: int = 300       # normal CONFIRM
     confirmation_ttl_strong_seconds: int = 120  # CONFIRM_STRONG (financial/booking/destructive)
 
-    # Append-only hash chain.
+    # Append-only hash chain + optional keyed authentication (Phase 3F).
     audit_genesis_hash: str = "0" * 64
+    #: Explicit legacy mode is ``none``. Production should use hmac-sha256 or
+    #: ed25519 and inject key material through environment/secret management.
+    audit_signing_algorithm: str = "none"
+    audit_signing_key: str = ""
+    audit_signing_public_key: str = ""
+    audit_signing_key_id: str = "default"
 
     # Hard wall-clock budget (seconds) for a single provider validate/execute
     # call during the dispatch phase (Phase 1E). Overrun -> ToolError(TIMEOUT),
@@ -42,9 +48,18 @@ class Settings(BaseSettings):
     circuit_breaker_failure_threshold: int = 5
     #: How long an OPEN circuit blocks dispatch before a HALF_OPEN probe.
     circuit_breaker_cooldown_seconds: float = 30.0
+    #: Persist state so OPEN circuits survive process restarts and are shared.
+    circuit_breaker_persistent: bool = True
 
     #: Max accepted HTTP request body (bytes) for hardening (Phase 2A).
     max_request_body_bytes: int = 262144
+
+    # Fixed-window API limiting (Phase 3F). Authenticated requests are checked
+    # against both an API-key bucket and a source-IP bucket.
+    rate_limit_enabled: bool = True
+    rate_limit_requests: int = 120
+    rate_limit_ip_requests: int = 300
+    rate_limit_window_seconds: float = 60.0
 
     # --- Phase 3A: agent (MVEA) settings -------------------------------------
     #: Build the agent-enabled container (real providers + agent routes).
@@ -103,7 +118,7 @@ class Settings(BaseSettings):
     code_exec_memory_limit_mb: int = 256
     code_exec_allow_network: bool = False
 
-    app_version: str = "0.5.0"
+    app_version: str = "0.6.0"
 
     # Note: a missing/malformed policy is always DENY-all (hard fail-closed).
     # This is intentionally not configurable — weakening it is a footgun.

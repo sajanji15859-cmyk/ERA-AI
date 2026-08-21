@@ -9,71 +9,33 @@ from era.models import (
     AgentRun,
     ApiKey,
     AuditLogEntry,
+    CircuitBreakerStateRow,
     MemoryEntry,
     PendingConfirmation,
     PolicyVersion,
     User,
     VaultSecret,
 )
+from era.repositories.audit import build_audit_row, verify_audit_rows
 from era.repositories.base import NewAuditEntry, VerifyResult
-from era.security.hashing import canonical_json, sha256_hex
+from era.security.signing import AuditSigner
 
 
 class SQLiteAuditRepo:
     """SQLite audit storage. Append-only; computes the hash chain on write."""
 
-    def __init__(self, genesis_hash: str):
+    def __init__(self, genesis_hash: str, signer: AuditSigner | None = None):
         self.genesis_hash = genesis_hash
+        self.signer = signer
 
     # -- write ----------------------------------------------------------------
     def append(self, session, entry: NewAuditEntry) -> AuditLogEntry:
         last = self.get_last(session)
-        seq = (last.seq + 1) if last else 1
-        prev_hash = last.entry_hash if last else self.genesis_hash
-        created_at = utcnow_iso()
-
-        payload = {
-            "seq": seq,
-            "created_at": created_at,
-            "actor_id": entry.actor_id,
-            "action_type": entry.action_type,
-            "action_params": entry.action_params,
-            "risk_level": entry.risk_level,
-            "decision": entry.decision,
-            "outcome": entry.outcome,
-            "confirmation_id": entry.confirmation_id,
-            "result": entry.result,
-            "error_code": entry.error_code,
-            "provider_id": entry.provider_id,
-            "capability_domain": entry.capability_domain,
-            "credential_ref": entry.credential_ref,
-            "policy_version": entry.policy_version,
-            "app_version": entry.app_version,
-            "meta": entry.meta,
-            "prev_hash": prev_hash,
-        }
-        entry_hash = sha256_hex(canonical_json(payload))
-
-        row = AuditLogEntry(
-            seq=seq,
-            created_at=created_at,
-            actor_id=entry.actor_id,
-            action_type=entry.action_type,
-            action_params=entry.action_params,
-            risk_level=entry.risk_level,
-            decision=entry.decision,
-            outcome=entry.outcome,
-            confirmation_id=entry.confirmation_id,
-            result=entry.result,
-            error_code=entry.error_code,
-            provider_id=entry.provider_id,
-            capability_domain=entry.capability_domain,
-            credential_ref=entry.credential_ref,
-            policy_version=entry.policy_version,
-            app_version=entry.app_version,
-            meta=entry.meta,
-            prev_hash=prev_hash,
-            entry_hash=entry_hash,
+        row = build_audit_row(
+            entry,
+            seq=(last.seq + 1) if last else 1,
+            prev_hash=last.entry_hash if last else self.genesis_hash,
+            signer=self.signer,
         )
         session.add(row)
         session.flush()
@@ -101,33 +63,14 @@ class SQLiteAuditRepo:
 
     # -- integrity ------------------------------------------------------------
     def verify(self, session) -> VerifyResult:
-        rows = list(
-            session.execute(select(AuditLogEntry).order_by(AuditLogEntry.seq)).scalars().all()
+        rows = session.execute(
+            select(AuditLogEntry).order_by(AuditLogEntry.seq)
+        ).scalars().all()
+        return verify_audit_rows(
+            rows,
+            genesis_hash=self.genesis_hash,
+            signer=self.signer,
         )
-        if not rows:
-            return VerifyResult(valid=True, entry_count=0, message="empty log")
-
-        prev = self.genesis_hash
-        for row in rows:
-            if row.prev_hash != prev:
-                return VerifyResult(
-                    valid=False, entry_count=len(rows),
-                    first_mismatch_seq=row.seq,
-                    message=f"broken chain link at seq {row.seq}",
-                )
-            expected = sha256_hex(canonical_json(self._payload_from_row(row)))
-            if row.entry_hash != expected:
-                return VerifyResult(
-                    valid=False, entry_count=len(rows),
-                    first_mismatch_seq=row.seq,
-                    message=f"entry hash mismatch at seq {row.seq}",
-                )
-            prev = row.entry_hash
-        return VerifyResult(valid=True, entry_count=len(rows), message="chain valid")
-
-    @staticmethod
-    def _payload_from_row(row: AuditLogEntry) -> dict:
-        return {f: getattr(row, f) for f in AuditLogEntry.HASH_FIELDS}
 
 
 class SQLiteConfirmationRepo:
@@ -293,3 +236,30 @@ class SQLiteMemoryRepo:
         session.delete(entry)
         session.flush()
         return True
+
+
+class SQLiteCircuitBreakerStateRepo:
+    """Durable breaker snapshots; SQL shape is shared with PostgreSQL."""
+
+    def get(self, session, provider_id: str) -> CircuitBreakerStateRow | None:
+        return session.get(CircuitBreakerStateRow, provider_id)
+
+    def upsert(
+        self,
+        session,
+        *,
+        provider_id: str,
+        state: str,
+        consecutive_failures: int,
+        opened_at: float | None,
+    ) -> CircuitBreakerStateRow:
+        row = self.get(session, provider_id)
+        if row is None:
+            row = CircuitBreakerStateRow(provider_id=provider_id)
+            session.add(row)
+        row.state = state
+        row.consecutive_failures = consecutive_failures
+        row.opened_at = opened_at
+        row.updated_at = utcnow_iso()
+        session.flush()
+        return row

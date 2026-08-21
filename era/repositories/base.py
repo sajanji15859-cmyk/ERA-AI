@@ -15,6 +15,7 @@ from era.models import (
     AgentRun,
     ApiKey,
     AuditLogEntry,
+    CircuitBreakerStateRow,
     MemoryEntry,
     PendingConfirmation,
     PolicyVersion,
@@ -137,6 +138,22 @@ class AgentRunRepo(Protocol):
     def update(self, session, run: AgentRun) -> AgentRun: ...
 
     def list_by_actor(self, session, actor_id: str, *, limit: int = 50) -> list[AgentRun]: ...
+
+
+class CircuitBreakerStateRepo(Protocol):
+    """Durable state snapshots for per-provider circuit breakers."""
+
+    def get(self, session, provider_id: str) -> CircuitBreakerStateRow | None: ...
+
+    def upsert(
+        self,
+        session,
+        *,
+        provider_id: str,
+        state: str,
+        consecutive_failures: int,
+        opened_at: float | None,
+    ) -> CircuitBreakerStateRow: ...
 
 
 class MemoryRepo(Protocol):

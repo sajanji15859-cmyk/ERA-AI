@@ -28,6 +28,9 @@ class AuditEntryOut(BaseModel):
     app_version: str
     prev_hash: str
     entry_hash: str
+    signing_algorithm: str | None = None
+    signing_key_id: str | None = None
+    signature: str | None = None
 
 
 class VerifyResponse(BaseModel):
