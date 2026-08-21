@@ -231,12 +231,13 @@ The agent adds **no new privilege surface** — every tool call flows through th
 | **Phase H — Coding/file agent** | The welding-site goal works end-to-end; deeper code-exec sandbox + git integration next | ✅ delivered (3D) |
 | **Phase 3C — Credential vault + provider secrets (2B)** | AES-256-GCM vault (env-only master key, fail-closed), admin vault API, vault-backed secret resolution for providers, real SMTP email provider, LLM key via vault, `vault.manage` RBAC | ✅ delivered (3C) |
 | **Phase 3D — GitHub + code-exec sandbox providers** | `github.*` action types, PAT in vault, repo/issue/PR/file operations; isolated subprocess code runner with safe env scrub, time/memory caps | ✅ delivered (3D) |
-| **Phase I — Multi-agent, streaming UI, Postgres, signing** | Multiple agents, SSE streaming chat, migrations, keyed audit signing, rate limiting (vault done in 3C) | ⬜ future |
+| **Phase 3E — Web UI / chat dashboard** | Mobile-first static dashboard served by the app at `/` over the same authenticated API: login (key → `/v1/me`), fetch-based SSE chat, typed-event timeline, in-UI approve/deny + challenge + continue, runs sidebar with event replay, CSP/clickjacking/MIME-sniffing response hardening | ✅ delivered (3E) |
+| **Phase I — Multi-agent, streaming UI, Postgres, signing** | Multiple agents, migrations, keyed audit signing, rate limiting (vault done in 3C; SSE chat + web UI done in 3B/3E) | ⬜ future |
 
 ### Next recommended phases (in order)
 1. ~~Phase 3C — Credential vault (2B)~~ — ✅ delivered.
 2. ~~Phase 3D — GitHub + code-exec sandbox provider~~ — ✅ delivered.
-3. **Phase 3E — Web UI** (mobile-first chat dashboard over the same authenticated API).
+3. ~~Phase 3E — Web UI~~ — ✅ delivered (mobile-first chat dashboard over the same authenticated API).
 4. **Phase 3F — Scale:** Postgres, Alembic, keyed audit signing, rate limiting.
 
 ### Testing strategy per phase (uniform)

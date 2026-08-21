@@ -3,7 +3,9 @@
 *Status: audit + **Phase 2A delivered**. Test baseline: `259 passed` on `main` (Phase 2A landed).
 **Phase 3A (MVEA — Minimum Viable ERA Agent) delivered** on top of 2A: agent loop, planner,
 task manager, real Workspace/Web providers, verification, memory, approval-gated execution and
-budget controls — `359 passed`. See [AGENT_AUDIT_AND_PLAN.md](AGENT_AUDIT_AND_PLAN.md) for the
+budget controls — `359 passed`. **Phases 3B (streaming chat + LLM hardening), 3C (credential
+vault + SMTP), 3D (GitHub + code-exec sandbox) and 3E (web chat dashboard)** are delivered on
+top — `537 passed`. See [AGENT_AUDIT_AND_PLAN.md](AGENT_AUDIT_AND_PLAN.md) for the
 full agent-transformation audit and roadmap (supersedes §D–§E for agent work).*
 
 ---
