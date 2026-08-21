@@ -81,3 +81,20 @@ class CreatedApiKey(ApiKeyOut):
     """ApiKey metadata + the raw key, returned EXACTLY ONCE at creation."""
 
     raw_key: str
+
+
+class MeOut(BaseModel):
+    """Identity introspection for the web UI (Phase 3E) login check.
+
+    Returns the server-derived identity of the presented key plus runtime
+    flags. No secrets: the raw API key is never echoed back.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: str
+    username: str
+    display_name: str | None
+    role: str
+    agent_enabled: bool
+    app_version: str

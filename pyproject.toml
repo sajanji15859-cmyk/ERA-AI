@@ -28,6 +28,10 @@ dev = [
 [tool.setuptools.packages.find]
 include = ["era*"]
 
+[tool.setuptools.package-data]
+# Phase 3E: web dashboard static assets (served by the FastAPI app at /).
+"era.web" = ["static/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

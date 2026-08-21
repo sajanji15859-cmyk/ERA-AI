@@ -582,3 +582,67 @@ Phase 3D adds native **GitHub operations** and a **sandboxed Python code executi
 pytest          # 522 passed across all suites (444 pre-existing + 78 Phase 3D)
 ruff check .    # clean
 ```
+
+## Phase 3E: Web UI / Chat Dashboard (delivered)
+
+Phase 3E adds a **mobile-first web chat dashboard** over the same authenticated
+API — no build step, no npm, no new backend capability. It is served by the
+FastAPI app itself at `/`, same-origin, so the Phase 2A auth model (Bearer API
+key → server-derived identity) applies unchanged and no CORS is needed.
+
+### What it provides
+
+- **Static dashboard** (`era/web/static/{index.html,app.js,styles.css}`) served
+  by the app at `/` (never cached) and `/static/*` (asset files). Dependency-free
+  vanilla HTML/CSS/JS, mobile-first responsive layout (sidebar drawer on small
+  screens).
+- **Login screen** — the operator pastes their API key once; it is kept in
+  `localStorage` and sent only as an `Authorization: Bearer` header, never in
+  the URL or the DOM. `GET /v1/me` verifies the key and returns the
+  server-derived identity (`username`, `role`) plus `agent_enabled` so the UI
+  can explain a 503 instead of failing silently. Invalid/revoked keys fall back
+  to the login screen.
+- **Streaming chat** — `POST /v1/agent/chat` is consumed with `fetch` +
+  `ReadableStream` (native `EventSource` cannot send auth headers). Every typed
+  event (`run_started`, `plan_created`, `task_started`, `tool_call`,
+  `observation`, `verdict`, `task_retrying`, `task_completed/failed/skipped`,
+  `confirmation_required`, `run_finished`) is rendered as a timeline; tool-call
+  params and file content are shown as the server already redacts/summarises
+  them.
+- **Approval gate in the UI** — `confirmation_required` renders an interactive
+  approve/deny card. Approve re-fetches the confirmation (`GET
+  /v1/confirmations/{id}`) for the exact hash-bound params and posts to the
+  existing approve endpoint; `CONFIRM_STRONG` shows the challenge phrase and
+  requires it typed back. A paused run shows a "Continue run" button, enabled
+  only once every pending confirmation is resolved. Replayed history renders
+  confirmations read-only (the server is the source of truth).
+- **Runs dashboard** — sidebar lists recent runs (`GET /v1/agent/runs`); opening
+  one replays its event history (`GET /v1/agent/runs/{id}/events`) and summary,
+  and lets a still-paused run be resumed.
+- **Response hardening** — every response (API, static, SSE, errors) gets
+  `Content-Security-Policy` (same-origin only, `frame-ancestors 'none'`),
+  `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+  `Referrer-Policy: no-referrer`, and a restrictive `Permissions-Policy`, via
+  `SecurityHeadersMiddleware` (`era/api/middleware.py`). The UI inserts all
+  dynamic content with `textContent` only — no `innerHTML`, so event data can
+  never inject markup.
+
+### Try it
+
+```bash
+ERA_AGENT_ENABLED=true uvicorn era.main:create_app --factory
+# open http://localhost:8000  →  paste an API key (python -m era.cli create-admin)
+```
+
+### Test
+
+```bash
+pytest          # 522 (1C–3D) + 15 (Phase 3E) = 537 passed
+ruff check .    # clean
+```
+
+### Explicitly NOT in Phase 3E
+
+No new backend capability (the agent/LLM/tools/approval gate are unchanged);
+no WebSocket (SSE already suffices); no multi-user realtime/push; no
+Postgres/rate-limiting/audit signing — those remain Phase 3F.

@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>ERA AI — Chat Dashboard</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <!-- Login / API-key screen -->
+  <section id="login-screen" class="login-screen" hidden>
+    <div class="login-card">
+      <div class="login-brand">
+        <span class="logo-mark">ERA</span>
+        <div>
+          <h1>ERA AI</h1>
+          <p class="login-sub">Personal agent dashboard</p>
+        </div>
+      </div>
+
+      <p class="login-help">
+        Paste your API key to open the dashboard. The key stays in this
+        browser only and is sent as an <code>Authorization</code> header —
+        never in the URL.
+      </p>
+
+      <form id="login-form" class="login-form" autocomplete="off">
+        <label for="api-key-input">API key</label>
+        <input id="api-key-input" type="password" spellcheck="false"
+               placeholder="era_…" autocomplete="off" required>
+        <button type="submit" id="login-button" class="btn btn-primary">Connect</button>
+        <p id="login-error" class="login-error" role="alert" hidden></p>
+      </form>
+
+      <p class="login-footnote">
+        No key? Create one on the server:
+        <code>python -m era.cli create-admin</code>
+      </p>
+    </div>
+  </section>
+
+  <!-- Dashboard -->
+  <div id="app" class="app" hidden>
+    <aside class="sidebar">
+      <div class="sidebar-head">
+        <span class="logo-mark logo-mark-sm">ERA</span>
+        <strong>ERA AI</strong>
+        <button id="new-chat-button" class="btn btn-primary btn-sm" title="New chat">New</button>
+      </div>
+
+      <div id="agent-banner" class="agent-banner" hidden>
+        Agent runtime disabled — set <code>ERA_AGENT_ENABLED=true</code>.
+      </div>
+
+      <nav class="runs-nav" aria-label="Previous runs">
+        <p class="runs-nav-label">Runs</p>
+        <ul id="runs-list" class="runs-list"></ul>
+      </nav>
+
+      <div class="sidebar-foot">
+        <div id="me-card" class="me-card">
+          <span id="me-avatar" class="avatar">?</span>
+          <div class="me-meta">
+            <span id="me-name" class="me-name">…</span>
+            <span id="me-role" class="me-role">…</span>
+          </div>
+        </div>
+        <button id="logout-button" class="btn btn-ghost btn-sm">Disconnect</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="chat-head">
+        <button id="menu-button" class="btn btn-ghost btn-icon" aria-label="Toggle runs">☰</button>
+        <h2 id="chat-title" class="chat-title">New chat</h2>
+        <span id="run-status" class="run-status"></span>
+      </header>
+
+      <div id="timeline" class="timeline" aria-live="polite"></div>
+
+      <footer class="composer">
+        <form id="chat-form" class="composer-form">
+          <textarea id="message-input" rows="1" spellcheck="false"
+                    placeholder="Ask ERA to do something… e.g. “मेरे लिए एक welding training website बनाओ”"></textarea>
+          <button type="submit" id="send-button" class="btn btn-primary" disabled>Send</button>
+        </form>
+        <p class="composer-hint">Enter to send · Shift+Enter for a new line</p>
+      </footer>
+    </main>
+  </div>
+
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

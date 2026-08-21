@@ -19,6 +19,9 @@ htmlcov/
 era.db
 *.db
 *.sqlite3
+*.db-wal
+*.db-shm
+*.db-journal
 
 # Agent workspace (generated artifacts — Phase 3A)
 workspace/
