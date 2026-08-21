@@ -134,6 +134,21 @@ class ExecutionService:
                 return ExecutionResponse(status="denied", decision=Decision.DENY,
                                          message="forbidden")
 
+            # Phase 2A: confirmations are actor-bound — only the initiating
+            # actor may approve. A different actor is a deny (fail closed).
+            if confirmation.actor_id is not None and confirmation.actor_id != ctx.actor_id:
+                self.confirmation_service.mark_status(session, confirmation, STATUS_DENIED)
+                self.audit_service.record(
+                    session, action=action, ctx=ctx,
+                    risk_level=confirmation.risk_level,
+                    decision=Decision(confirmation.decision), outcome=Outcome.REJECTED,
+                    policy_version=confirmation.policy_version,
+                    confirmation_id=confirmation.id,
+                    result="confirmation belongs to another actor",
+                )
+                return ExecutionResponse(status="denied", decision=Decision(confirmation.decision),
+                                         message="denied")
+
             ok, reason = self.confirmation_service.validate(confirmation, action, challenge)
             if not ok:
                 status = STATUS_EXPIRED if reason == "expired" else STATUS_DENIED
@@ -174,6 +189,12 @@ class ExecutionService:
             if confirmation.status != "PENDING":
                 return ExecutionResponse(status="denied", decision=Decision(confirmation.decision),
                                          message=f"already {confirmation.status}")
+
+            # Phase 2A: only the initiating actor may deny (admin can still act
+            # on their own confirmations; cross-actor denial is rejected).
+            if confirmation.actor_id is not None and confirmation.actor_id != ctx.actor_id:
+                return ExecutionResponse(status="denied", decision=Decision(confirmation.decision),
+                                         message="denied")
 
             self.confirmation_service.mark_status(session, confirmation, STATUS_DENIED)
             _, domain, provider_id, credential_ref = self._meta(confirmation.action_type, ctx)
@@ -219,6 +240,10 @@ class ExecutionService:
                 session, action=action, risk_level=risk_level,
                 decision=decision, policy_version=policy_version,
             )
+            # Phase 2A: bind the confirmation to the initiating actor so only
+            # that actor (or an admin) can approve/deny it.
+            confirmation.actor_id = ctx.actor_id
+            self.confirmation_service.confirmation_repo.update(session, confirmation)
             cid = confirmation.id
             self.audit_service.record(
                 session, action=action, ctx=ctx, risk_level=risk_level,

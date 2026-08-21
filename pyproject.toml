@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "era-ai"
-version = "0.1.0"
-description = "ERA AI — Phase 1E provider integration foundation"
+version = "0.2.0"
+description = "ERA AI — Phase 2A foundation security (authn/authz/identity/input hardening)"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -39,3 +39,4 @@ exclude = ["agent.py", "brain.py", "chat.py", "config.py", "main.py", "memory.py
 [tool.ruff.lint.per-file-ignores]
 # `Depends(...)` in defaults is the documented FastAPI dependency-injection idiom.
 "era/api/routes/*.py" = ["B008"]
+"era/api/deps.py" = ["B008"]

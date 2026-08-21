@@ -5,13 +5,15 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from era.core.enums import Decision, RiskLevel
 
 
 class ActionRule(BaseModel):
     """An explicit per-action policy rule, optionally scoped by a param predicate."""
+
+    model_config = ConfigDict(extra="forbid")
 
     decision: Decision
     when: dict[str, Any] | None = None  # simple equality predicate on params
@@ -24,6 +26,8 @@ class ActionRule(BaseModel):
 
 class Policy(BaseModel):
     """A versioned permission policy document."""
+
+    model_config = ConfigDict(extra="forbid")
 
     version: int = 1
     tier_defaults: dict[RiskLevel, Decision]

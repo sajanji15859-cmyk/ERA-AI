@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlalchemy import select
 
 from era.core.util import utcnow_iso
-from era.models import AuditLogEntry, PendingConfirmation, PolicyVersion
+from era.models import ApiKey, AuditLogEntry, PendingConfirmation, PolicyVersion, User
 from era.repositories.base import NewAuditEntry, VerifyResult
 from era.security.hashing import canonical_json, sha256_hex
 
@@ -143,3 +143,53 @@ class SQLitePolicyRepo:
         session.add(row)
         session.flush()
         return row
+
+
+class SQLiteUserRepo:
+    def get(self, session, user_id: str) -> User | None:
+        return session.get(User, user_id)
+
+    def get_by_username(self, session, username: str) -> User | None:
+        stmt = select(User).where(User.username == username)
+        return session.execute(stmt).scalars().first()
+
+    def create(self, session, user: User) -> User:
+        session.add(user)
+        session.flush()
+        return user
+
+    def update(self, session, user: User) -> User:
+        session.add(user)
+        session.flush()
+        return user
+
+    def list(self, session) -> list[User]:
+        stmt = select(User).order_by(User.username)
+        return list(session.execute(stmt).scalars().all())
+
+
+class SQLiteApiKeyRepo:
+    def get(self, session, key_id: str) -> ApiKey | None:
+        return session.get(ApiKey, key_id)
+
+    def get_by_hash(self, session, key_hash: str) -> ApiKey | None:
+        stmt = select(ApiKey).where(ApiKey.key_hash == key_hash)
+        return session.execute(stmt).scalars().first()
+
+    def create(self, session, key: ApiKey) -> ApiKey:
+        session.add(key)
+        session.flush()
+        return key
+
+    def update(self, session, key: ApiKey) -> ApiKey:
+        session.add(key)
+        session.flush()
+        return key
+
+    def list_by_user(self, session, user_id: str) -> list[ApiKey]:
+        stmt = select(ApiKey).where(ApiKey.user_id == user_id).order_by(ApiKey.created_at)
+        return list(session.execute(stmt).scalars().all())
+
+    def list(self, session) -> list[ApiKey]:
+        stmt = select(ApiKey).order_by(ApiKey.created_at)
+        return list(session.execute(stmt).scalars().all())

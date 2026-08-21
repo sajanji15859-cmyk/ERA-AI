@@ -4,16 +4,18 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from era.api.deps import get_container
+from era.api.deps import get_container, require_permission
 from era.container import Container
 from era.db import transaction
 from era.schemas.audit import AuditEntryOut, VerifyResponse
+from era.security.rbac import Permission
 
 router = APIRouter()
 
 
 @router.get("/v1/audit/verify", response_model=VerifyResponse)
-def verify(container: Container = Depends(get_container)):
+def verify(container: Container = Depends(get_container),
+           user=Depends(require_permission(Permission.AUDIT_READ))):
     with transaction(container.session_factory) as session:
         result = container.audit_service.verify(session)
     return VerifyResponse(
@@ -25,7 +27,8 @@ def verify(container: Container = Depends(get_container)):
 
 
 @router.get("/v1/audit/{entry_id}", response_model=AuditEntryOut)
-def get_entry(entry_id: int, container: Container = Depends(get_container)):
+def get_entry(entry_id: int, container: Container = Depends(get_container),
+              user=Depends(require_permission(Permission.AUDIT_READ))):
     with transaction(container.session_factory) as session:
         entry = container.audit_service.get(session, entry_id)
     if entry is None:
@@ -36,7 +39,8 @@ def get_entry(entry_id: int, container: Container = Depends(get_container)):
 @router.get("/v1/audit", response_model=list[AuditEntryOut])
 def list_entries(limit: int = 100, offset: int = 0,
                  action_type: str | None = None, outcome: str | None = None,
-                 container: Container = Depends(get_container)):
+                 container: Container = Depends(get_container),
+                 user=Depends(require_permission(Permission.AUDIT_READ))):
     with transaction(container.session_factory) as session:
         entries = container.audit_service.list(
             session, limit=limit, offset=offset,

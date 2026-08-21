@@ -43,7 +43,10 @@ class Settings(BaseSettings):
     #: How long an OPEN circuit blocks dispatch before a HALF_OPEN probe.
     circuit_breaker_cooldown_seconds: float = 30.0
 
-    app_version: str = "0.1.0"
+    #: Max accepted HTTP request body (bytes) for hardening (Phase 2A).
+    max_request_body_bytes: int = 262144
+
+    app_version: str = "0.2.0"
 
     # Note: a missing/malformed policy is always DENY-all (hard fail-closed).
     # This is intentionally not configurable — weakening it is a footgun.
