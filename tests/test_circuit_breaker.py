@@ -26,6 +26,7 @@ INELIGIBLE = (
     ProviderErrorCode.TIMEOUT,
     ProviderErrorCode.NOT_IMPLEMENTED,
     ProviderErrorCode.INTERNAL,
+    ProviderErrorCode.UNKNOWN,
 )
 
 

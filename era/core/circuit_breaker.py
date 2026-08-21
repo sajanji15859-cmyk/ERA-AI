@@ -22,10 +22,12 @@ States
 Security invariants
 -------------------
 * Authorization (``AUTH``), ``FORBIDDEN``, ``VALIDATION``, ``NOT_FOUND``,
-  ``CONFLICT``, ``NOT_IMPLEMENTED``, ``TIMEOUT`` and ``INTERNAL`` failures are
-  **never** eligible and can never trip, reopen or otherwise affect breaker
-  state — an authorization/policy failure can never be converted into
-  circuit-breaker behavior.
+  ``CONFLICT``, ``NOT_IMPLEMENTED``, ``TIMEOUT``, ``INTERNAL`` and ``UNKNOWN``
+  (an out-of-taxonomy code string) failures are **never** eligible and can
+  never trip, reopen or otherwise affect breaker state — an
+  authorization/policy failure can never be converted into circuit-breaker
+  behavior, and an unrecognized failure is never mistaken for a transient
+  outage.
 * The breaker is *only* consulted by the execution service after the
   authorization record has been committed, so it cannot bypass the permission
   engine or audit-before-execute; and because it blocks rather than dispatches,

@@ -35,9 +35,15 @@ def test_toolerror_accepts_string_code():
     assert err.code is ProviderErrorCode.TIMEOUT
 
 
-def test_toolerror_unknown_string_code_falls_back():
+def test_toolerror_unknown_string_code_classified_as_unknown():
+    # An out-of-taxonomy code string must NOT be coerced into the retryable
+    # PROVIDER_ERROR bucket: unknown failures fail closed (never retried,
+    # never breaker-eligible).
     err = ToolError("weird", code="VENDOR_SPECIFIC_WAT")
-    assert err.code is ProviderErrorCode.PROVIDER_ERROR
+    assert err.code is ProviderErrorCode.UNKNOWN
+    assert ProviderErrorCode.UNKNOWN not in (  # sanity: not silently retryable
+        ProviderErrorCode.UNAVAILABLE, ProviderErrorCode.PROVIDER_ERROR,
+    )
 
 
 @pytest.mark.parametrize("code", list(ProviderErrorCode))

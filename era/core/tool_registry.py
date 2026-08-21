@@ -6,6 +6,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
+from era.core.async_provider import to_sync
 from era.core.enums import RiskLevel
 from era.core.provider_info import ProviderInfo, describe_provider
 from era.core.tool_provider import ToolProvider
@@ -56,6 +57,17 @@ class ToolRegistry:
         self._by_id: dict[str, ToolProvider] = {}
 
     def register(self, provider: ToolProvider) -> None:
+        """Register ``provider`` for its action types.
+
+        Async providers (:class:`~era.core.async_provider.AsyncToolProvider`)
+        are adapted to the synchronous dispatch SPI via
+        :func:`~era.core.async_provider.to_sync` at registration time, so the
+        dispatch boundary only ever sees synchronous providers; synchronous
+        providers pass through unchanged. This makes an async provider
+        directly wireable (e.g. through ``build_container``) without any
+        silent coroutine-leak failure at dispatch time.
+        """
+        provider = to_sync(provider)
         if provider.id in self._by_id:
             raise ValueError(f"provider {provider.id!r} is already registered")
         for action_type in provider.action_types:

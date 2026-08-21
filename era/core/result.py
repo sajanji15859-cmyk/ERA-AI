@@ -56,6 +56,9 @@ class ProviderErrorCode(StrEnum):
     PROVIDER_ERROR = "PROVIDER_ERROR"
     #: A bug in the provider raised an unexpected exception (defensive catch).
     INTERNAL = "INTERNAL"
+    #: The provider raised an unrecognized / out-of-taxonomy code string. Never
+    #: retried and never circuit-breaker-eligible (fail closed on ambiguity).
+    UNKNOWN = "UNKNOWN"
 
 
 class ToolError(Exception):
@@ -63,8 +66,11 @@ class ToolError(Exception):
 
     ``code`` defaults to :attr:`ProviderErrorCode.PROVIDER_ERROR` so existing
     providers remain valid without changes; providers SHOULD set a specific
-    code. The execution service records the code in the audit log alongside the
-    human-readable message.
+    code. An unrecognized code string is classified as
+    :attr:`ProviderErrorCode.UNKNOWN` — which the retry layer never retries and
+    the circuit breaker never counts — so an out-of-taxonomy failure can never
+    be mistaken for a transient ``PROVIDER_ERROR``. The execution service
+    records the code in the audit log alongside the human-readable message.
     """
 
     def __init__(self, message: str, *, provider_id: str | None = None,
@@ -80,4 +86,6 @@ class ToolError(Exception):
         try:
             return ProviderErrorCode(str(code))
         except ValueError:
-            return ProviderErrorCode.PROVIDER_ERROR
+            # Out-of-taxonomy code: fail closed rather than guessing that the
+            # failure is a retryable generic provider error.
+            return ProviderErrorCode.UNKNOWN
