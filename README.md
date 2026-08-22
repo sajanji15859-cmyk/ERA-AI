@@ -1003,3 +1003,144 @@ test. Run the latter after installing Chromium:
 ```bash
 ERA_TEST_BROWSER=1 pytest -m browser tests/test_browser_playwright_e2e.py
 ```
+
+---
+
+## Phase 4B: Reliable Browser Workflows (delivered)
+
+Phase 4B makes ERA's browser automation **stable, inspectable, drift-resistant,
+verifiable and safely resumable** on modern dynamic websites.  The centerpiece
+is `browser.inspect` — a bounded snapshot of the rendered accessibility state
+that returns opaque, provider-issued element references (`element_ref`).  The
+agent never invents CSS selectors or visible-text matchers; it inspects, picks a
+reference, confirms, and the provider revalidates everything before executing.
+
+### New actions
+
+| Action | Risk / default decision | Purpose |
+|---|---|---|
+| `browser.inspect` | `SAFE` / `ALLOW` | Bounded accessibility snapshot (role, accessible name, tag, input type, tab/frame/origin, snapshot generation) with `element_ref` tokens |
+| `browser.tabs` | `SAFE` / `ALLOW` | List the run's tabs/popups with opaque tab ids |
+| `browser.activate_tab` | `SENSITIVE` / `ALLOW` | Switch the run's active tab by tab id |
+| `browser.download` | `MUTATING` / `CONFIRM` | Trigger a download via element ref and save it workspace-confined, size-bound and atomically |
+| `browser.upload` | `MUTATING` / `CONFIRM` | Upload an existing workspace file to a file input (`set_input_files`) |
+
+`browser.click`, `browser.fill` and `browser.submit` additionally accept an
+`element_ref` target (exactly one of `selector` / `text` / `element_ref`) and an
+optional deterministic `expect` post-condition.
+
+### element_ref lifecycle
+
+- Refs are **provider-generated** (`er_<random>`), opaque and unpredictable;
+  users/LLMs can never craft a resolvable reference.
+- Refs are scoped to one actor/run, tab, frame and **snapshot generation**, and
+  are TTL-bound (`ERA_BROWSER_ELEMENT_REF_TTL_SECONDS`, default 120 s).
+- Refs become invalid after: navigation, tab close/switch-away, frame
+  replacement, context close, a newer `browser.inspect` snapshot, page drift or
+  TTL expiry.
+- Resolution is fail-closed and requires **exactly one** fingerprint match
+  (tag + role + accessible name + input type + structural path + origin):
+  - zero matches → `NOT_FOUND` (`no element matches the reference`);
+  - multiple matches → `CONFLICT` (`re-inspect`);
+  - moved element → `CONFLICT` (`fingerprint mismatch / page drift`);
+  - wrong tab / stale snapshot / expired / frame gone / origin changed →
+    `CONFLICT` with a specific message;
+  - cross-actor / cross-run / closed context → `NOT_FOUND`.
+- There is **no fallback** to CSS selectors or text matching when a reference
+  cannot be resolved exactly.
+
+### Confirmation continuity
+
+Mutating actions still require confirmation.  While waiting, the browser
+context is preserved.  After approval the provider revalidates actor/run, tab,
+frame, origin, page state, reference, fingerprint and snapshot generation
+before executing **exactly once**.  If the page drifted while the human was
+reviewing, the action fails closed and the agent must run `browser.inspect`
+again — the mutation is never replayed on a different element.
+
+### Tabs, popups, frames and Shadow DOM
+
+- New tabs/popups opened by a click are detected with a bounded wait; each gets
+  an opaque tab id (`browser.tabs` / `browser.activate_tab`).  Refs are
+  tab-scoped and never usable across tabs.
+- Iframes are identified explicitly (`frame:main`, `frame:N`).  Element refs
+  are frame-scoped; replaced or removed frames invalidate their refs.  For
+  cross-origin frames only bounded accessibility metadata is exposed — never
+  secrets.
+- Open Shadow DOM roots are walked and exposed with `in_shadow` flags; nested
+  shadow roots work too.  Security restrictions are unchanged.
+
+### Downloads and uploads
+
+- `browser.download`: destination must resolve inside the workspace
+  (`../` and absolute paths are rejected), the artifact is size-bound
+  (`ERA_BROWSER_MAX_DOWNLOAD_BYTES`, default 200 MiB), copied to a temp file
+  and atomically renamed; the final artifact is verified inside the workspace.
+  The receipt contains only the workspace-relative path, byte count, sanitized
+  filename and scope ids — never browser internals or sensitive state.
+- `browser.upload`: source must exist inside the workspace, be within
+  `ERA_BROWSER_MAX_UPLOAD_BYTES` (default 100 MiB), and target a real file
+  input.  `browser.fill` rejects file inputs (use `browser.upload`).
+- Both are `MUTATING`/`CONFIRM` and non-retryable; ambiguous outcomes return
+  `SIDE_EFFECT_UNKNOWN` and quarantine the context.
+
+### Sensitive DOM and prompt-injection defenses
+
+- `browser.inspect` never returns input values, hidden-input values, cookies,
+  authorization headers, storage secrets or raw sensitive form contents;
+  password inputs appear only as metadata (`input_type: "password"`,
+  `sensitive: true`).
+- Page content is **data, never policy**.  Inspect results are marked
+  `content_untrusted: true`, the planner and brain prompts forbid treating page
+  text as instructions, and the permission/confirmation/audit gates apply to
+  every proposed action — an injected "ignore previous instructions…" page can
+  never authorize payments, credential disclosure, destructive mutations or
+  downloads/uploads by itself.
+
+### Deterministic post-conditions and receipts
+
+Mutations return sanitized interaction receipts: action type, opaque ref,
+tab/frame context, origin, URL, and a `post_condition` block
+(`url_changed`, `tab_count_before/after`, `element_attached`).  Callers may
+declare `expect: {"kind": "navigation" | "tab_opened" | "element_detached",
+"url_contains": "..."}`; if the declared post-condition is not met the action
+fails with `CONFLICT` and is never blindly repeated.
+
+### Configuration
+
+```dotenv
+ERA_BROWSER_ELEMENT_REF_TTL_SECONDS=120.0
+ERA_BROWSER_MAX_INSPECT_ELEMENTS=200
+ERA_BROWSER_MAX_DOWNLOAD_BYTES=209715200
+ERA_BROWSER_MAX_UPLOAD_BYTES=104857600
+```
+
+### Tests and real-Chromium E2E
+
+The Phase 4B suite is deterministic and offline (simulated transport) and adds
+**48 collected cases**.  The opt-in real-Chromium E2E now also exercises the
+inspect → element_ref → click → stale-ref workflow:
+
+```bash
+pytest                                   # 732 passed, 3 optional skips, 735 collected
+ruff check .                             # clean
+ERA_TEST_BROWSER=1 pytest -m browser tests/test_browser_playwright_e2e.py
+```
+
+Skipped E2E tests are reported as skipped with the exact reason
+(`set ERA_TEST_BROWSER=1 for real Chromium E2E`) — never as passes.
+
+### Remaining limitations
+
+- Element references live in the browser worker's memory; a process restart
+  invalidates them (fail-closed `NOT_FOUND`, re-inspect required).  Approval
+  pauses keep the context alive only for the life of the worker process.
+- Roles/names are derived from the rendered DOM with an ARIA-mapped walk, not
+  Chromium's computed accessibility-tree roles; visually rich widgets may
+  expose fewer usable elements than a native a11y tree would.
+- Elements with identical fingerprints (e.g. two identical buttons) resolve to
+  a deterministic `CONFLICT` until re-inspected with more context.
+- The simulator walker covers declarative shadow DOM; dynamically attached
+  shadow roots are exercised only by the real-Chromium E2E.
+- No database migration was required for Phase 4B (references are runtime
+  state; the confirmation schema from 4A.1 already carries execution scope).

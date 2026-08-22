@@ -99,6 +99,9 @@ def build_browser_provider(settings: Settings, workspace_root: Path,
         command_queue_size=int(settings.browser_command_queue_size),
         proxy_server=settings.browser_proxy_server,
         secret_resolver=secret_resolver,
+        element_ref_ttl_seconds=float(settings.browser_element_ref_ttl_seconds),
+        max_download_bytes=int(settings.browser_max_download_bytes),
+        max_upload_bytes=int(settings.browser_max_upload_bytes),
     )
 
 

@@ -544,3 +544,53 @@ tests/test_browser_playwright_e2e.py
 Validation: **683 passed, 2 skipped (685 collected)** and `ruff check .` clean.
 The suite has **33 more collected cases** than Phase 4A; real Chromium E2E is
 opt-in through `ERA_TEST_BROWSER=1` so offline CI remains deterministic.
+
+---
+
+## P) PHASE 4B DELIVERED — Reliable Browser Workflows
+
+Version **0.8.1** (same line as 4A.1; no schema migration required).
+
+### What changed
+
+- **`browser.inspect`** (`SAFE`/`ALLOW`): bounded rendered-accessibility
+  snapshot — role, accessible name, tag, input type, tab/frame/origin
+  identity, snapshot generation — with opaque provider-issued `element_ref`
+  tokens.  No CSS selectors or visible-text matching needed or inventable.
+- **Element-reference security** (`ElementReferenceRegistry`): refs are
+  actor/run-, tab-, frame- and generation-scoped, TTL-bound, unpredictable,
+  and resolve via an exact single-fingerprint match or a deterministic
+  `NOT_FOUND`/`CONFLICT`.  Navigation, tab close/switch, frame replacement,
+  context close, new snapshots and drift invalidate refs; there is no
+  selector fallback and no guessing.
+- **Tabs/popups**: `browser.tabs` / `browser.activate_tab` with opaque tab
+  ids and bounded popup detection; refs are tab-scoped.
+- **Frames**: explicit frame identity (`frame:main`, `frame:N`),
+  frame-scoped refs, stale-frame invalidation; cross-origin frames expose
+  bounded accessibility metadata only.
+- **Shadow DOM**: open/nested shadow roots inspected and usable
+  (declarative shadow DOM in the simulator, real roots in Chromium).
+- **Downloads/uploads**: `browser.download` / `browser.upload` are
+  workspace-confined, traversal-safe, size-bound, non-retryable and
+  `CONFIRM`-gated; downloads are atomic with verified artifacts; fills on
+  file inputs are rejected.
+- **Confirmation continuity**: contexts preserved while waiting; post-approval
+  revalidation of actor/run, tab, frame, origin, page, ref and fingerprint
+  before a single execution; drift fails closed.
+- **Post-conditions and receipts**: `expect` (`navigation`, `tab_opened`,
+  `element_detached`) checked deterministically; sanitized interaction
+  receipts carry ref/tab/frame/origin/post-condition — never secrets.
+- **Prompt-injection defense**: page content marked `content_untrusted`,
+  planner/brain prompts forbid treating page text as instructions; gate
+  enforcement unchanged.
+- **Non-retryable set extended** to download/upload;
+  `SIDE_EFFECT_UNKNOWN` + context quarantine on ambiguous timeouts.
+
+### Validation
+
+735 collected (732 passed, 3 optional skips — live PostgreSQL and opt-in real
+Chromium E2E).  Phase 4B contributes **50 new collected cases** in
+`tests/test_browser_workflows.py`; the E2E additionally covers the
+inspect → element_ref → click → stale-ref path when `ERA_TEST_BROWSER=1`.
+`ruff check era tests` clean; `git diff --check` clean; migration head remains
+`0005_phase_4a1_browser_hardening`.
