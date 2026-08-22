@@ -42,6 +42,18 @@ class ActionType(StrEnum):
     BROWSER_FILL = "browser.fill"
     BROWSER_SUBMIT = "browser.submit"
 
+    # --- reliable browser workflows (Phase 4B) --------------------------------
+    #: Bounded rendered-accessibility snapshot with context-bound element refs.
+    BROWSER_INSPECT = "browser.inspect"
+    #: List the run's tabs/popups with opaque, provider-issued tab identities.
+    BROWSER_TABS = "browser.tabs"
+    #: Activate an existing tab by its provider-issued tab id.
+    BROWSER_ACTIVATE_TAB = "browser.activate_tab"
+    #: Deterministic, workspace-confined download triggered by an element ref.
+    BROWSER_DOWNLOAD = "browser.download"
+    #: Workspace-confined file upload to a file input (set_input_files).
+    BROWSER_UPLOAD = "browser.upload"
+
     # --- email ---------------------------------------------------------------
     EMAIL_READ = "email.read"
     EMAIL_SEARCH = "email.search"
@@ -201,11 +213,28 @@ ACTION_PARAM_SCHEMAS: dict[str, dict[str, Any]] = {
             "selector": {"type": "string", "minLength": 1, "maxLength": 1000},
             "text": {"type": "string", "minLength": 1, "maxLength": 1000},
             "exact": {"type": "boolean"},
+            # Phase 4B: provider-issued element reference from browser.inspect.
+            # Prefer element_ref over fragile selectors/text; invented refs fail
+            # closed at resolution time.
+            "element_ref": {"type": "string", "minLength": 24, "maxLength": 128},
+            "expect": {
+                "type": "object",
+                "properties": {
+                    "kind": {
+                        "type": "string",
+                        "enum": ["navigation", "tab_opened", "element_detached"],
+                    },
+                    "url_contains": {"type": "string", "minLength": 1, "maxLength": 500},
+                },
+                "required": ["kind"],
+                "additionalProperties": False,
+            },
         },
         "required": [],
         "oneOf": [
-            {"required": ["selector"], "not": {"required": ["text"]}},
-            {"required": ["text"], "not": {"required": ["selector"]}},
+            {"required": ["selector"], "not": {"required": ["text", "element_ref"]}},
+            {"required": ["text"], "not": {"required": ["selector", "element_ref"]}},
+            {"required": ["element_ref"], "not": {"required": ["selector", "text"]}},
         ],
         "additionalProperties": False,
     },
@@ -213,6 +242,7 @@ ACTION_PARAM_SCHEMAS: dict[str, dict[str, Any]] = {
         "type": "object",
         "properties": {
             "selector": {"type": "string", "minLength": 1, "maxLength": 1000},
+            "element_ref": {"type": "string", "minLength": 24, "maxLength": 128},
             "text": {"type": "string", "maxLength": 2000},
             "value_ref": {
                 "type": "string",
@@ -221,10 +251,22 @@ ACTION_PARAM_SCHEMAS: dict[str, dict[str, Any]] = {
                 "description": "vault:browser/<name> reference for secret input",
             },
         },
-        "required": ["selector"],
-        "oneOf": [
-            {"required": ["text"], "not": {"required": ["value_ref"]}},
-            {"required": ["value_ref"], "not": {"required": ["text"]}},
+        "required": [],
+        # Exactly one target (selector XOR element_ref) AND exactly one value
+        # (text XOR value_ref). Two independent constraints -> allOf/oneOf.
+        "allOf": [
+            {
+                "oneOf": [
+                    {"required": ["selector"], "not": {"required": ["element_ref"]}},
+                    {"required": ["element_ref"], "not": {"required": ["selector"]}},
+                ],
+            },
+            {
+                "oneOf": [
+                    {"required": ["text"], "not": {"required": ["value_ref"]}},
+                    {"required": ["value_ref"], "not": {"required": ["text"]}},
+                ],
+            },
         ],
         "additionalProperties": False,
     },
@@ -232,8 +274,96 @@ ACTION_PARAM_SCHEMAS: dict[str, dict[str, Any]] = {
         "type": "object",
         "properties": {
             "selector": {"type": "string", "minLength": 1, "maxLength": 1000},
+            "element_ref": {"type": "string", "minLength": 24, "maxLength": 128},
+            "expect": {
+                "type": "object",
+                "properties": {
+                    "kind": {
+                        "type": "string",
+                        "enum": ["navigation", "tab_opened", "element_detached"],
+                    },
+                    "url_contains": {"type": "string", "minLength": 1, "maxLength": 500},
+                },
+                "required": ["kind"],
+                "additionalProperties": False,
+            },
         },
         "required": [],
+        "oneOf": [
+            {"required": ["selector"], "not": {"required": ["element_ref"]}},
+            {"required": ["element_ref"], "not": {"required": ["selector"]}},
+            {
+                "required": [],
+                "not": {"anyOf": [
+                    {"required": ["selector"]},
+                    {"required": ["element_ref"]},
+                ]},
+            },
+        ],
+        "additionalProperties": False,
+    },
+    ActionType.BROWSER_INSPECT.value: {
+        "type": "object",
+        "properties": {
+            "max_elements": {"type": "integer", "minimum": 1, "maximum": 500},
+        },
+        "required": [],
+        "additionalProperties": False,
+    },
+    ActionType.BROWSER_TABS.value: {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": False,
+    },
+    ActionType.BROWSER_ACTIVATE_TAB.value: {
+        "type": "object",
+        "properties": {
+            "tab_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        },
+        "required": ["tab_id"],
+        "additionalProperties": False,
+    },
+    ActionType.BROWSER_DOWNLOAD.value: {
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048,
+                "description": "workspace-relative destination file path",
+            },
+            "element_ref": {"type": "string", "minLength": 24, "maxLength": 128},
+            "selector": {"type": "string", "minLength": 1, "maxLength": 1000},
+            "text": {"type": "string", "minLength": 1, "maxLength": 1000},
+            "exact": {"type": "boolean"},
+            "max_bytes": {"type": "integer", "minimum": 1, "maximum": 1073741824},
+        },
+        "required": ["path"],
+        "oneOf": [
+            {"required": ["element_ref"], "not": {"required": ["selector", "text"]}},
+            {"required": ["selector"], "not": {"required": ["element_ref", "text"]}},
+            {"required": ["text"], "not": {"required": ["element_ref", "selector"]}},
+        ],
+        "additionalProperties": False,
+    },
+    ActionType.BROWSER_UPLOAD.value: {
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048,
+                "description": "workspace-relative source file path (must exist)",
+            },
+            "element_ref": {"type": "string", "minLength": 24, "maxLength": 128},
+            "selector": {"type": "string", "minLength": 1, "maxLength": 1000},
+        },
+        "required": ["path"],
+        "oneOf": [
+            {"required": ["element_ref"], "not": {"required": ["selector"]}},
+            {"required": ["selector"], "not": {"required": ["element_ref"]}},
+        ],
         "additionalProperties": False,
     },
     # email
@@ -729,6 +859,17 @@ _SPECS: list[ActionSpec] = [
     _spec(ActionType.BROWSER_CLICK, RiskLevel.MUTATING, "browser"),
     _spec(ActionType.BROWSER_FILL, RiskLevel.MUTATING, "browser", ("text",)),
     _spec(ActionType.BROWSER_SUBMIT, RiskLevel.MUTATING, "browser"),
+
+    # reliable browser workflows (Phase 4B)
+    # inspect/tabs are SAFE reads of the run's own browser state; activate_tab
+    # only switches which tab the run's later actions address (SENSITIVE, not
+    # SAFE, so policy can gate it); download/upload mutate the workspace and
+    # the page -> MUTATING (default CONFIRM) and non-retryable.
+    _spec(ActionType.BROWSER_INSPECT, RiskLevel.SAFE, "browser"),
+    _spec(ActionType.BROWSER_TABS, RiskLevel.SAFE, "browser"),
+    _spec(ActionType.BROWSER_ACTIVATE_TAB, RiskLevel.SENSITIVE, "browser"),
+    _spec(ActionType.BROWSER_DOWNLOAD, RiskLevel.MUTATING, "browser"),
+    _spec(ActionType.BROWSER_UPLOAD, RiskLevel.MUTATING, "browser"),
 
     # email
     _spec(ActionType.EMAIL_READ, RiskLevel.SENSITIVE, "email", ("token", "refresh_token")),

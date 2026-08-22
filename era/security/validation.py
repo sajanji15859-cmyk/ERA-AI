@@ -193,17 +193,47 @@ def validate_param_schema(params: dict[str, Any], schema: dict[str, Any] | None)
         if matches != 1:
             raise ValidationError_("parameters must satisfy exactly one allowed schema shape")
 
+    # ``allOf``: every branch must match (Phase 4B — independent constraints such
+    # as browser.fill's target XOR value shapes cannot be encoded in a single
+    # flat ``oneOf``). Branches are validated with the same required/not subset.
+    all_of = schema.get("allOf")
+    if isinstance(all_of, list):
+        for condition in all_of:
+            if not isinstance(condition, dict):
+                raise ValidationError_("invalid allOf condition in action schema")
+            nested_one_of = condition.get("oneOf")
+            if isinstance(nested_one_of, list):
+                nested_matches = sum(
+                    1 for branch in nested_one_of
+                    if isinstance(branch, dict)
+                    and _matches_schema_condition(params, branch)
+                )
+                if nested_matches != 1:
+                    raise ValidationError_(
+                        "parameters must satisfy exactly one allowed schema shape"
+                    )
+                continue
+            if not _matches_schema_condition(params, condition):
+                raise ValidationError_("parameters do not satisfy the required schema shape")
+
     return params
 
 
 def _matches_schema_condition(params: dict[str, Any], condition: dict[str, Any]) -> bool:
-    """Match the small ``required``/``not`` subset used by strict action schemas."""
+    """Match the small ``required``/``not``/``anyOf`` subset used by strict
+    action schemas (``anyOf`` added for Phase 4B "at most one of" shapes)."""
 
     required = condition.get("required", [])
     if not isinstance(required, list) or not all(
         isinstance(key, str) and key in params and params[key] is not None
         for key in required
     ):
+        return False
+    any_of = condition.get("anyOf")
+    if (isinstance(any_of, list)
+            and not any(isinstance(sub, dict)
+                        and _matches_schema_condition(params, sub)
+                        for sub in any_of)):
         return False
     negated = condition.get("not")
     return not (isinstance(negated, dict) and _matches_schema_condition(params, negated))

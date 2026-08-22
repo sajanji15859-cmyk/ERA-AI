@@ -26,6 +26,10 @@ def test_browser_settings_defaults_and_version():
     assert settings.browser_context_idle_seconds == 300.0
     assert settings.browser_command_queue_size == 128
     assert settings.browser_proxy_server == ""
+    assert settings.browser_element_ref_ttl_seconds == 120.0
+    assert settings.browser_max_inspect_elements == 200
+    assert settings.browser_max_download_bytes == 209715200
+    assert settings.browser_max_upload_bytes == 104857600
     assert settings.provider_result_max_bytes == 524288
     assert settings.app_version == "0.8.1"
     assert __version__ == "0.8.1"
@@ -41,6 +45,10 @@ def test_browser_settings_load_exact_era_environment_names(monkeypatch):
     monkeypatch.setenv("ERA_BROWSER_CONTEXT_IDLE_SECONDS", "45")
     monkeypatch.setenv("ERA_BROWSER_COMMAND_QUEUE_SIZE", "9")
     monkeypatch.setenv("ERA_BROWSER_PROXY_SERVER", "http://egress-proxy:8080")
+    monkeypatch.setenv("ERA_BROWSER_ELEMENT_REF_TTL_SECONDS", "45")
+    monkeypatch.setenv("ERA_BROWSER_MAX_INSPECT_ELEMENTS", "77")
+    monkeypatch.setenv("ERA_BROWSER_MAX_DOWNLOAD_BYTES", "1048576")
+    monkeypatch.setenv("ERA_BROWSER_MAX_UPLOAD_BYTES", "524288")
     monkeypatch.setenv("ERA_PROVIDER_RESULT_MAX_BYTES", "262144")
     settings = Settings()
     assert settings.browser_headless is False
@@ -51,6 +59,10 @@ def test_browser_settings_load_exact_era_environment_names(monkeypatch):
     assert settings.browser_context_idle_seconds == 45
     assert settings.browser_command_queue_size == 9
     assert settings.browser_proxy_server == "http://egress-proxy:8080"
+    assert settings.browser_element_ref_ttl_seconds == 45
+    assert settings.browser_max_inspect_elements == 77
+    assert settings.browser_max_download_bytes == 1048576
+    assert settings.browser_max_upload_bytes == 524288
     assert settings.provider_result_max_bytes == 262144
 
 
@@ -102,6 +114,9 @@ def test_agent_runtime_registers_real_browser_and_stub_does_not_claim_it(tmp_pat
     assert browser.action_types == {
         "browser.navigate", "browser.screenshot", "browser.extract_dom",
         "browser.click", "browser.fill", "browser.submit",
+        # Phase 4B
+        "browser.inspect", "browser.tabs", "browser.activate_tab",
+        "browser.download", "browser.upload",
     }
     assert not (browser.action_types & stub.action_types)
     assert container.registry.get("browser.navigate") is browser

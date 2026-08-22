@@ -235,10 +235,58 @@ ambiguities identified after Phase 4A:
 Version: **0.8.1**. Validation: **683 passed, 2 optional skips, 685 collected**;
 `ruff check .` clean. The suite grew by **33 collected cases** over Phase 4A.
 
+---
+
+## § Phase 4B — Reliable Browser Workflows (implemented)
+
+Phase 4B turns browser automation into a stable, inspectable,
+drift-resistant, verifiable and fail-closed workflow engine:
+
+1. **`browser.inspect`** (`SAFE`/`ALLOW`): bounded rendered-accessibility
+   snapshot (role, accessible name, tag, input type, tab/frame/origin,
+   snapshot generation) returning opaque, provider-issued `element_ref`
+   tokens.  No CSS selectors or visible-text matching are needed or
+   inventable.
+2. **Element-reference security**: refs are actor/run-, tab-, frame- and
+   snapshot-generation-scoped and TTL-bound; resolution requires exactly one
+   fingerprint match or a deterministic `NOT_FOUND`/`CONFLICT` error.
+   Navigation, tab close, frame replacement, context close, new snapshots and
+   drift invalidate refs; there is never a selector fallback.
+3. **Confirmation continuity**: contexts are preserved while waiting; after
+   approval the provider revalidates actor/run, tab, frame, origin, page
+   state, reference and fingerprint before executing exactly once.  Drift
+   during review fails closed.
+4. **Non-retryable side effects preserved**: click/fill/submit/download/upload
+   are non-retryable; ambiguous timeouts return `SIDE_EFFECT_UNKNOWN` and
+   quarantine the context.
+5. **Tabs/popups**: opaque tab ids, `browser.tabs`/`browser.activate_tab`,
+   bounded popup detection, tab-scoped refs.
+6. **Frames**: explicit frame identity, frame-scoped refs, stale-frame
+   invalidation, cross-origin frames expose metadata only.
+7. **Shadow DOM**: open (incl. nested) shadow roots are inspected and usable,
+   with no security relaxation.
+8. **Secure downloads/uploads**: workspace confinement, no traversal, size
+   bounds, atomic writes, verified artifacts, sanitized receipts.
+9. **Prompt-injection defenses**: page content is data, never policy
+   (`content_untrusted` flag, planner/brain rules, gate enforcement).
+10. **Deterministic post-conditions** (`expect: navigation | tab_opened |
+    element_detached`) and sanitized interaction receipts.
+11. **Planner integration**: LLM planner and ToolCallBrain prompts encode the
+    inspect-first / never-invent-refs / no-retry-of-ambiguous-mutations rules.
+
+No schema migration was required (references are runtime state; the 4A.1
+confirmation schema already preserves execution scope).
+
+Version: **0.8.1**. Validation: **732 passed, 3 optional skips, 735 collected**
+(50 new Phase 4B cases); `ruff check .` clean; `git diff --check` clean.  The
+opt-in real-Chromium E2E (`ERA_TEST_BROWSER=1`) additionally exercises the
+inspect → element_ref → click → stale-ref workflow; without Chromium it is
+skipped with an explicit reason and never counted as passed.
+
 ### Recommended next phase
 
-With these P0 hardening items complete, proceed to **Phase 4B — Reliable Browser
-Workflows**: accessibility-tree element handles, tabs/popups, downloads,
-iframes/shadow DOM, post-condition receipts and resumable login workflows.
-Keep payments and irreversible transactions outside autonomous operation until
-a dedicated strong-confirmation and idempotency design is delivered.
+**Phase 4C — Workflow Automation**: reusable multi-step browser workflows
+(login helpers, form pipelines) with persisted step receipts, plus idempotency
+for irreversible transactions once a dedicated strong-confirmation design is
+delivered.  Payments and irreversible transactions remain outside autonomous
+operation.

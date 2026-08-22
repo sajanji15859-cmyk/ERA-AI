@@ -105,6 +105,17 @@ class Settings(BaseSettings):
     #: credentials outside this URL and configure them at the proxy boundary.
     browser_proxy_server: str = ""
 
+    # --- Phase 4B: reliable browser workflows --------------------------------
+    #: Lifetime of a browser.inspect element reference (seconds). After this a
+    #: ref fails closed with CONFLICT; the agent must re-inspect.
+    browser_element_ref_ttl_seconds: float = 120.0
+    #: Default max elements returned by one browser.inspect snapshot.
+    browser_max_inspect_elements: int = 200
+    #: Hard bound on a single browser.download artifact (bytes).
+    browser_max_download_bytes: int = 209715200  # 200 MiB
+    #: Hard bound on a single browser.upload source file (bytes).
+    browser_max_upload_bytes: int = 104857600   # 100 MiB
+
     # --- Phase 3C: credential vault + provider secrets -----------------------
     #: Master key for the credential vault: 32 bytes as 64 hex chars or 44
     #: base64 chars. Env-only — never commit a real key. Empty = the vault is

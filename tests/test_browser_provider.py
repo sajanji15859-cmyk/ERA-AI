@@ -301,6 +301,9 @@ def test_browser_catalog_schemas_are_strict():
     actions = [
         "browser.navigate", "browser.screenshot", "browser.extract_dom",
         "browser.click", "browser.fill", "browser.submit",
+        # Phase 4B
+        "browser.inspect", "browser.tabs", "browser.activate_tab",
+        "browser.download", "browser.upload",
     ]
     for action_type in actions:
         spec = ACTION_CATALOG.get(action_type)
