@@ -126,3 +126,7 @@ class ExecutionResponse(BaseModel):
     challenge: str | None = None
     result: ActionResult | None = None
     message: str | None = None
+    #: Phase 4C: machine-readable provider error code on failed/rejected steps,
+    #: so the workflow engine can react deterministically (e.g.
+    #: ``SIDE_EFFECT_UNKNOWN`` -> ambiguous, never auto-retried).
+    error_code: str | None = None

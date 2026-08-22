@@ -36,6 +36,8 @@ from era.services.permission_engine import PermissionEngine
 from era.services.policy import PolicyService
 from era.services.schedules import ScheduleService
 from era.services.vault_service import VaultService
+from era.services.workflow_service import WorkflowService
+from era.workflows.catalog import WorkflowCatalog, build_default_catalog
 
 
 @dataclass
@@ -63,6 +65,9 @@ class Container:
     job_service: JobService
     #: Phase 3H: scheduled and recurring jobs.
     schedule_service: ScheduleService
+    #: Phase 4C: registered workflow catalog + durable workflow engine.
+    workflow_catalog: WorkflowCatalog
+    workflow_service: WorkflowService
     #: Phase 3A: agent run lifecycle. ``None`` unless the agent runtime wired
     #: it (``build_agent_container``) — the default container stays unchanged.
     agent_service: AgentService | None = None
@@ -180,6 +185,23 @@ def build_container(settings: Settings | None = None,
     if settings.scheduler_enabled:
         schedule_service.start(interval_seconds=settings.scheduler_interval_seconds)
 
+    # Phase 4C: registered workflow catalog (with reference workflows) + the
+    # durable workflow engine. The engine only dispatches through the
+    # execution service, so every inner step keeps its own permission,
+    # confirmation, audit and reliability gates.
+    workflow_catalog = build_default_catalog(catalog)
+    workflow_service = WorkflowService(
+        session_factory=session_factory,
+        catalog=catalog,
+        workflow_catalog=workflow_catalog,
+        workflow_repo=repositories.workflow,
+        execution_service=execution_service,
+        confirmation_service=confirmation_service,
+        audit_service=audit_service,
+        idempotency_service=idempotency_service,
+        settings=settings,
+    )
+
     policy_service.bootstrap()
     auth_service.bootstrap_admin()
 
@@ -202,4 +224,6 @@ def build_container(settings: Settings | None = None,
         idempotency_service=idempotency_service,
         job_service=job_service,
         schedule_service=schedule_service,
+        workflow_catalog=workflow_catalog,
+        workflow_service=workflow_service,
     )

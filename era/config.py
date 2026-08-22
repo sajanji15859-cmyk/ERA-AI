@@ -101,6 +101,13 @@ class Settings(BaseSettings):
     browser_max_contexts: int = 32
     browser_context_idle_seconds: float = 300.0
     browser_command_queue_size: int = 128
+    #: Optional explicit Chromium executable path. Empty = use the Playwright-
+    #: managed browser (normal case). Some environments provide a system or
+    #: bundled Chromium and need Playwright pointed at it.
+    browser_executable_path: str = ""
+    #: Optional extra Chromium launch args (JSON array in env). Kept empty in
+    #: production; used e.g. for a sandbox-proxied TLS/CAC environment.
+    browser_extra_args: list[str] = []
     #: Optional mandatory-egress proxy for production browser workers. Keep
     #: credentials outside this URL and configure them at the proxy boundary.
     browser_proxy_server: str = ""
@@ -115,6 +122,17 @@ class Settings(BaseSettings):
     browser_max_download_bytes: int = 209715200  # 200 MiB
     #: Hard bound on a single browser.upload source file (bytes).
     browser_max_upload_bytes: int = 104857600   # 100 MiB
+
+    # --- Phase 4C: durable, resumable browser workflows -----------------------
+    #: Hard cap on the number of steps in one workflow definition.
+    workflow_max_steps: int = 50
+    #: Hard wall-clock budget for one workflow run (seconds). Overrun -> FAILED.
+    workflow_max_wallclock_seconds: float = 600.0
+    #: Max pending confirmations a workflow may hold at once (sequential engine
+    #: means 1; kept configurable for future parallel steps).
+    workflow_max_pending_confirmations: int = 1
+    #: Max total rendered-param characters across a workflow definition.
+    workflow_max_param_chars: int = 16384
 
     # --- Phase 3C: credential vault + provider secrets -----------------------
     #: Master key for the credential vault: 32 bytes as 64 hex chars or 44

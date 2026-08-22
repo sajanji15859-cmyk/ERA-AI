@@ -102,6 +102,8 @@ def build_browser_provider(settings: Settings, workspace_root: Path,
         element_ref_ttl_seconds=float(settings.browser_element_ref_ttl_seconds),
         max_download_bytes=int(settings.browser_max_download_bytes),
         max_upload_bytes=int(settings.browser_max_upload_bytes),
+        executable_path=settings.browser_executable_path,
+        extra_args=list(settings.browser_extra_args or []),
     )
 
 

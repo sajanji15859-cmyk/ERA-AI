@@ -27,6 +27,7 @@ from era.repositories.sqlite import (
     SQLiteScheduleRepo,
     SQLiteUserRepo,
     SQLiteVaultRepo,
+    SQLiteWorkflowRunRepo,
 )
 from era.security.signing import AuditSigner
 
@@ -96,6 +97,10 @@ class PostgresJobRepo(SQLiteJobRepo):
 
 class PostgresScheduleRepo(SQLiteScheduleRepo):
     """PostgreSQL schedule repository (Phase 3H)."""
+
+
+class PostgresWorkflowRunRepo(SQLiteWorkflowRunRepo):
+    """PostgreSQL workflow run storage (Phase 4C)."""
 
 
 class PostgresCircuitBreakerStateRepo:

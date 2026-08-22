@@ -290,3 +290,57 @@ skipped with an explicit reason and never counted as passed.
 for irreversible transactions once a dedicated strong-confirmation design is
 delivered.  Payments and irreversible transactions remain outside autonomous
 operation.
+
+## § Phase 4C — Durable, Resumable, Exactly-Once Browser Workflows (implemented)
+
+Phase 4C makes the Phase 4B primitives composable into **declarative,
+durable, resumable multi-step browser workflows**:
+
+1. **Workflow definition layer** (`era/workflows/`): bounded, strict-schema
+   definitions validated at registration time. Steps reference exactly one
+   catalogued browser action (an explicit allowlist), with `expect`
+   post-conditions (reused from 4B), target-acquisition descriptors resolved
+   to *fresh* `element_ref`s by re-inspection, opaque `vault:browser/<name>`
+   fills (plaintext password/unknown-sensitivity fills are rejected), and
+   `on_denied: stop|skip`.
+2. **Catalog / registry integration**: `browser.workflow_run` is catalogued as
+   `MUTATING`/`CONFIRM` in `era/registry/actions.py` and appears in the
+   permission-matrix, RBAC domain allowlist and default-policy tests. Every
+   inner step is still gated independently.
+3. **Engine** (`era/services/workflow_service.py`): dispatches every inner step
+   **exclusively through `ExecutionService`**; records per-step results; stops
+   deterministically on failure/drift/budget; maps `SIDE_EFFECT_UNKNOWN` to an
+   `ambiguous` state requiring explicit operator resolution.
+4. **Durable run state**: migration `0006` adds `workflow_run` and
+   `workflow_step_run` (never raw refs, plaintext values, cookies or page
+   content — only redacted intent/params). Fresh DBs reach head; legacy DBs
+   upgrade cleanly; downgrade drops only the new tables.
+5. **Resumability**: confirmation-pause → approve (existing flow) → resume from
+   the durable checkpoint; actor-bound; preserves `execution_scope`; re-inspects
+   on resume and never trusts persisted browser state; audit-outcome + post-condition
+   revalidation after approval.
+6. **Exactly-once**: `run_token` unique per actor; completed/confirmed steps
+   never re-run; ambiguous outcomes never auto-continue/retry.
+7. **Secrets & injection defenses**: vault-only secret fills; redacted stored
+   state (opaque refs preserved); sanitized receipts; page text can never
+   define/modify/start a workflow.
+8. **Bounded execution**: max steps, max param chars, max wall-clock; cycles /
+   unbounded recursion rejected.
+9. **Reference workflows**: `login` (tested offline), plus `search_and_extract`
+   and `download_report` documentation examples.
+
+New action: `browser.workflow_run` (`MUTATING`/`CONFIRM`).
+
+Version: **0.8.1**. Validation: **765 passed, 3 optional skips, 768 collected**
+(33 new Phase 4C cases, including migration tests for `0006`); `ruff check .`
+clean; `git diff --check` clean.  The opt-in real-Chromium E2E now also runs a
+workflow through the engine on a public page; without `ERA_TEST_BROWSER=1` it
+is skipped with an explicit reason and never counted as passed.
+
+### Recommended next phase
+
+**Phase 4D — Workflow Operations & Governance**: parallel/conditional workflow
+steps, scheduling long-lived workflows, per-workflow rate limits and quotas,
+workflow templates/versioning, and an operator review UI for `ambiguous` runs.
+Autonomous payments and irreversible transactions remain out of scope until a
+dedicated strong-confirmation + idempotency design is delivered.

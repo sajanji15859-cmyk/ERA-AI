@@ -53,6 +53,10 @@ class ActionType(StrEnum):
     BROWSER_DOWNLOAD = "browser.download"
     #: Workspace-confined file upload to a file input (set_input_files).
     BROWSER_UPLOAD = "browser.upload"
+    #: Run a declarative, registered workflow (Phase 4C). Dispatch is a strict
+    #: schema envelope; every inner step is still evaluated by the permission
+    #: engine / confirmation / audit gates independently via ExecutionService.
+    BROWSER_WORKFLOW_RUN = "browser.workflow_run"
 
     # --- email ---------------------------------------------------------------
     EMAIL_READ = "email.read"
@@ -364,6 +368,18 @@ ACTION_PARAM_SCHEMAS: dict[str, dict[str, Any]] = {
             {"required": ["element_ref"], "not": {"required": ["selector"]}},
             {"required": ["selector"], "not": {"required": ["element_ref"]}},
         ],
+        "additionalProperties": False,
+    },
+    # Phase 4C: run a declarative, registered workflow. The definition is a
+    # bounded strict-schema envelope; params carry opaque run inputs only.
+    ActionType.BROWSER_WORKFLOW_RUN.value: {
+        "type": "object",
+        "properties": {
+            "workflow": {"type": "string", "minLength": 1, "maxLength": 64},
+            "params": {"type": "object"},
+            "run_token": {"type": "string", "minLength": 1, "maxLength": 128},
+        },
+        "required": ["workflow"],
         "additionalProperties": False,
     },
     # email
@@ -870,6 +886,10 @@ _SPECS: list[ActionSpec] = [
     _spec(ActionType.BROWSER_ACTIVATE_TAB, RiskLevel.SENSITIVE, "browser"),
     _spec(ActionType.BROWSER_DOWNLOAD, RiskLevel.MUTATING, "browser"),
     _spec(ActionType.BROWSER_UPLOAD, RiskLevel.MUTATING, "browser"),
+    # Phase 4C: conservatively MUTATING by default (a workflow may contain
+    # mutating steps). Every inner step is still gated independently by the
+    # permission engine, confirmation and audit layers.
+    _spec(ActionType.BROWSER_WORKFLOW_RUN, RiskLevel.MUTATING, "browser"),
 
     # email
     _spec(ActionType.EMAIL_READ, RiskLevel.SENSITIVE, "email", ("token", "refresh_token")),

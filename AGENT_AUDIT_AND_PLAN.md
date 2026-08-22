@@ -594,3 +594,65 @@ Chromium E2E).  Phase 4B contributes **50 new collected cases** in
 inspect → element_ref → click → stale-ref path when `ERA_TEST_BROWSER=1`.
 `ruff check era tests` clean; `git diff --check` clean; migration head remains
 `0005_phase_4a1_browser_hardening`.
+
+## Q) PHASE 4C DELIVERED — Durable, Resumable, Exactly-Once Browser Workflows
+
+Version **0.8.1**; adds migration `0006_phase_4c_workflows`.
+
+### What changed
+
+- **Workflow definition layer** (`era/workflows/`): bounded, strict-schema
+  definitions validated at registration. Steps reference exactly one
+  catalogued browser action from an explicit allowlist (never
+  `browser.workflow_run` → no unbounded recursion). Supports `expect`
+  post-conditions (reused from 4B), target descriptors resolved to fresh
+  `element_ref`s by re-inspection (never persisted, never invented), opaque
+  `vault:browser/<name>` fills (plaintext password / unknown-sensitivity fills
+  rejected), `on_denied: stop|skip`, and `{{name}}` param templates.
+- **Catalog / permission integration**: `browser.workflow_run` is catalogued
+  `MUTATING`/`CONFIRM` (domain `browser`) and added to the permission-matrix,
+  RBAC domain allowlist and default-policy tests.
+- **Workflow engine** (`era/services/workflow_service.py`): dispatches every
+  inner step **exclusively through `ExecutionService`** — the engine never
+  calls a provider directly. Per-step results are recorded in
+  `workflow_step_run`; `workflow_run` tracks status/current_step/resume token/
+  definition checksum + redacted definition & params.
+- **Durability & resumability**: runs pause at confirmations and resume from
+  the durable checkpoint via the existing approval flow; process-restart
+  resume re-inspects and re-acquires targets fail-closed (no persisted browser
+  state is trusted); actor-bound; preserves `execution_scope`.
+- **Exactly-once**: `run_token` unique per actor; completed/confirmed steps
+  never re-run; on resume the engine checks the confirmation's **audit
+  outcome** and revalidates post-conditions (an approved-but-failed dispatch is
+  never treated as a success). `SIDE_EFFECT_UNKNOWN` → `ambiguous` →
+  explicit operator resolution (`continue`/`abort`); never auto-continue/retry.
+- **Secrets & injection defenses**: vault-only secret fills; redacted durable
+  state (opaque refs preserved); sanitized receipts; page content is data,
+  never policy — it cannot define/modify/start a workflow.
+- **Bounded execution**: max steps, max param chars, max wall-clock; cycles /
+  unbounded recursion rejected at validation.
+- **Reference workflows**: `login` (tested offline), `search_and_extract`,
+  `download_report` (documentation examples).
+
+### Security notes
+
+- The workflow engine is an orchestrator only; it adds no new browser
+  primitive and never bypasses a gate. Every inner step passes permission,
+  confirmation, audit and reliability checks independently through
+  `ExecutionService`.
+- Element refs, plaintext fill values, cookies, headers and page content are
+  never persisted in workflow state. Receipts are bounded and sanitized.
+- Cross-process persistent cookies/session store remain out of scope; browser
+  state stays ephemeral per run with only confirmation-pause continuity.
+- Payments / irreversible transactions remain outside autonomous operation.
+
+### Validation
+
+768 collected (**765 passed, 3 optional skips** — live PostgreSQL and opt-in
+real Chromium E2E).  Phase 4C contributes **33 new offline/simulator cases**
+(`tests/test_phase4c_workflows.py`, `tests/test_phase4c_migrations.py`); the
+opt-in real-Chromium E2E additionally runs a workflow through the engine on a
+public page when `ERA_TEST_BROWSER=1`. `ruff check era tests` clean;
+`git diff --check` clean; migration head is `0006_phase_4c_workflows`
+(fresh DBs reach head, legacy DBs upgrade cleanly, downgrade drops only the
+new tables).

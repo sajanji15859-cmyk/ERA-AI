@@ -26,6 +26,7 @@ from era.api.routes import (
     schedules,
     ui,
     vault,
+    workflows,
 )
 from era.config import Settings
 from era.container import build_container
@@ -84,6 +85,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(vault.router)
     app.include_router(jobs.router)
     app.include_router(schedules.router)
+    app.include_router(workflows.router)
     if settings.agent_enabled:
         from era.api.routes import agent
         app.include_router(agent.router)
