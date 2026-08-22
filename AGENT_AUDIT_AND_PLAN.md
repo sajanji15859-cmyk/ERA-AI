@@ -451,3 +451,96 @@ tests/test_phase3h_migrations.py
 All 562 existing tests pass, plus 37 new tests = **599 passed**.
 Ruff is clean.
 
+
+---
+
+## N) PHASE 4A DELIVERED — Self-Hosted Browser Automation
+
+Phase 4A adds the first real dynamic-browser capability while preserving ERA's
+single execution boundary. Version is now **0.8.0**.
+
+### New implementation
+
+```
+era/providers/browser.py          BrowserProvider + BrowserTransport protocol
+                                  + dedicated-thread Playwright Chromium transport
+                                  + deterministic offline simulator
+ tests/test_browser_provider.py   Provider/security/contract/confirmation tests
+ tests/test_browser_runtime.py    Settings, wiring and result-boundary tests
+```
+
+`browser.navigate` and `browser.screenshot` are `SENSITIVE`,
+`browser.extract_dom` is `SAFE`, and `browser.click`, `browser.fill`, and
+`browser.submit` are `MUTATING` (`CONFIRM`). All have strict parameter schemas
+and use capability domain `browser`.
+
+### Security invariants
+
+- The existing ExecutionService remains the only route to provider dispatch:
+  permission → confirmation (for interactions) → durable authorization audit →
+  reliability gate → provider → result audit.
+- Public URL validation runs before every navigation; Playwright request routes
+  block private/loopback/link-local/metadata networks, redirects, unsafe schemes
+  and ports. Service workers/WebSockets are disabled.
+- Browser state lives in isolated non-persistent actor/session contexts.
+- Screenshot and HTML writes use `WorkspaceRoot`; path traversal, absolute
+  paths and symlink escapes are rejected.
+- The Playwright dependency and Chromium are optional/lazy for offline CI;
+  `SimulatedBrowserTransport` requires neither network nor a binary.
+- Configured 30s timeout, 1280×800 viewport and bounded screenshot/DOM outputs
+  complement the existing provider hard timeout.
+
+### Agent and verification integration
+
+`RulePlanner` recognizes URL screenshot and live/dynamic extraction intents and
+plans navigation before capture/extraction. `Verifier` supports
+`screenshot_exists` and `dom_extracted`; the execution boundary now carries a
+provider's safe structured `ActionResult.data` to the observation so DOM output
+can actually be verified. Screenshot/HTML paths are retained as run artifacts.
+`build_browser_provider` is registered in the agent runtime, and both `user` and
+`admin` roles may reach the `browser` domain subject to all inner gates.
+
+### Validation
+
+The checked-out baseline collects 600 tests (599 passing plus one optional live
+PostgreSQL skip). Phase 4A adds **52 tests**. Current result: **651 passed, 1
+skipped (652 collected)**; `ruff check .` is clean.
+
+---
+
+## O) PHASE 4A.1 DELIVERED — Browser Hardening
+
+Version **0.8.1** closes the P0 browser findings before Phase 4B.
+
+### Security/reliability changes
+
+- Agent browser contexts use server-derived `agent:<run_id>` scopes. Revision
+  `0005_phase_4a1_browser_hardening` binds pending confirmations to that scope,
+  so later approval resumes the original page/cookies without sharing them
+  across runs. Terminal/error paths close the context; waiting runs retain it.
+- Playwright uses a bounded, deadline-aware command queue. Commands cancelled
+  while queued never dispatch. Mutating timeouts become
+  `SIDE_EFFECT_UNKNOWN`, never retry, and quarantine context state.
+- Browser declares click/fill/submit non-retryable to both ExecutionService and
+  AgentLoop, including failed post-condition verification.
+- Agent form secrets use owner-bound `vault:browser/<name>` references. Direct
+  plaintext fill values are redacted; raw agent-plan values are erased/rejected.
+- `era/security/result_safety.py` validates and redacts every provider result
+  centrally before response/observation/job/idempotency persistence.
+- Active context, idle TTL, queue and result-size bounds are configurable. An
+  optional egress proxy, disabled QUIC/non-proxied WebRTC, existing route guards
+  and documented network-namespace policy provide layered SSRF controls.
+
+### Files
+
+```
+era/security/result_safety.py
+era/migrations/versions/0005_phase_4a1_browser_hardening.py
+tests/test_browser_hardening.py
+tests/test_phase4a1_migrations.py
+tests/test_browser_playwright_e2e.py
+```
+
+Validation: **683 passed, 2 skipped (685 collected)** and `ruff check .` clean.
+The suite has **33 more collected cases** than Phase 4A; real Chromium E2E is
+opt-in through `ERA_TEST_BROWSER=1` so offline CI remains deterministic.

@@ -11,7 +11,8 @@ Guarantees:
   its :class:`~era.core.result.ProviderErrorCode` is in ``RetryPolicy.retryable_codes``
   (default: ``UNAVAILABLE`` and ``PROVIDER_ERROR``). Codes such as ``VALIDATION``,
   ``AUTH``, ``FORBIDDEN``, ``NOT_FOUND``, ``CONFLICT``, ``TIMEOUT``,
-  ``NOT_IMPLEMENTED``, ``INTERNAL`` and ``UNKNOWN`` (an out-of-taxonomy code
+  ``SIDE_EFFECT_UNKNOWN``, ``NOT_IMPLEMENTED``, ``INTERNAL`` and ``UNKNOWN``
+  (an out-of-taxonomy code
   string) are never retried — retrying them could duplicate side effects, mask
   authorization problems or hide bugs.
 * **Bounded.** ``max_attempts`` is capped at ``MAX_ATTEMPTS_BOUND``; the loop is a
@@ -60,6 +61,7 @@ NEVER_RETRY_CODES: frozenset[ProviderErrorCode] = frozenset({
     ProviderErrorCode.NOT_FOUND,
     ProviderErrorCode.CONFLICT,
     ProviderErrorCode.TIMEOUT,
+    ProviderErrorCode.SIDE_EFFECT_UNKNOWN,
     ProviderErrorCode.NOT_IMPLEMENTED,
     ProviderErrorCode.INTERNAL,
     #: Out-of-taxonomy codes must never be retried: the failure's nature is

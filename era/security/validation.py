@@ -145,6 +145,7 @@ def validate_param_schema(params: dict[str, Any], schema: dict[str, Any] | None)
     * Unknown parameters (when properties declared and additionalProperties is not True) -> ValidationError_
     * Wrong types (string, integer, number, boolean, array, object) -> ValidationError_
     * Violations of enum, minLength, maxLength, minimum, maximum -> ValidationError_
+    * ``oneOf`` required/not shape constraints must match exactly one branch.
     """
     if schema is None:
         return params
@@ -183,7 +184,29 @@ def validate_param_schema(params: dict[str, Any], schema: dict[str, Any] | None)
             if "maximum" in prop_spec and isinstance(v, (int, float)) and v > prop_spec["maximum"]:
                 raise ValidationError_(f"parameter {k!r} must be <= {prop_spec['maximum']}")
 
+    one_of = schema.get("oneOf")
+    if isinstance(one_of, list):
+        matches = sum(
+            1 for condition in one_of
+            if isinstance(condition, dict) and _matches_schema_condition(params, condition)
+        )
+        if matches != 1:
+            raise ValidationError_("parameters must satisfy exactly one allowed schema shape")
+
     return params
+
+
+def _matches_schema_condition(params: dict[str, Any], condition: dict[str, Any]) -> bool:
+    """Match the small ``required``/``not`` subset used by strict action schemas."""
+
+    required = condition.get("required", [])
+    if not isinstance(required, list) or not all(
+        isinstance(key, str) and key in params and params[key] is not None
+        for key in required
+    ):
+        return False
+    negated = condition.get("not")
+    return not (isinstance(negated, dict) and _matches_schema_condition(params, negated))
 
 
 def _check_prop_type(param_name: str, value: Any, expected_type: str) -> None:

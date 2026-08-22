@@ -1,11 +1,16 @@
-"""ToolProviders and (mock) LLM providers.
+"""ERA tool and model providers.
 
-Phase 1C ships only ``StubProvider`` (a no-op executor standing in for every
-future capability) and ``MockLLMProvider`` (a fixed-response model for testing
-the agent loop). Real Web/Email/WhatsApp/Booking/File-Photo/Android providers
-arrive in later phases and register themselves with the ToolRegistry.
+The package exports production providers that are useful across runtime wiring
+and tests. ``StubProvider`` and ``MockLLMProvider`` remain deterministic test
+implementations; browser automation additionally exposes both its self-hosted
+Playwright transport and a socket-free simulator.
 """
 
+from era.providers.browser import (
+    BrowserProvider,
+    PlaywrightBrowserTransport,
+    SimulatedBrowserTransport,
+)
 from era.providers.code_exec import CodeExecProvider
 from era.providers.email_smtp import EmailSmtpProvider
 from era.providers.github import GitHubProvider
@@ -13,9 +18,12 @@ from era.providers.mock_llm import MockLLMProvider
 from era.providers.stub import StubProvider
 
 __all__ = [
+    "BrowserProvider",
     "CodeExecProvider",
     "EmailSmtpProvider",
     "GitHubProvider",
     "MockLLMProvider",
+    "PlaywrightBrowserTransport",
+    "SimulatedBrowserTransport",
     "StubProvider",
 ]

@@ -822,3 +822,184 @@ Phase 3H resolves the last architectural debt item, adds recurring scheduled job
 pytest          # 600+ tests passed
 ruff check .    # clean
 ```
+
+---
+
+## Phase 4A: Self-Hosted Browser Automation (Playwright) (delivered)
+
+ERA AI `0.8.0` can now open and interact with modern dynamic/SPA pages in a
+self-hosted headless Chromium browser. Browser work is not a privileged side
+channel: every action uses the same permission engine, confirmation flow,
+append-only audit log, timeout/retry policy and circuit breaker as every other
+provider.
+
+### Browser action catalog
+
+| Action | Risk / default decision | Parameters |
+|---|---|---|
+| `browser.navigate` | `SENSITIVE` / `ALLOW` | `url`, optional `wait_until` |
+| `browser.screenshot` | `SENSITIVE` / `ALLOW` | workspace `path`, optional `selector` / `full_page` |
+| `browser.extract_dom` | `SAFE` / `ALLOW` | optional `selector`, `max_chars`, `save_html_path` |
+| `browser.click` | `MUTATING` / **`CONFIRM`** | exactly one of CSS `selector` or visible `text` |
+| `browser.fill` | `MUTATING` / **`CONFIRM`** | `selector`, `text` |
+| `browser.submit` | `MUTATING` / **`CONFIRM`** | optional form/element `selector` |
+
+Every schema is strict (`additionalProperties: false`). The `browser`
+capability domain is allowed for `user` and `admin` roles; RBAC is still only
+the outer gate and never bypasses policy/confirmation.
+
+### Security and isolation
+
+- **SSRF defense:** public HTTP(S) only; private RFC1918, loopback, link-local,
+  reserved/multicast, cloud metadata addresses, credentials-in-URL and ports
+  other than 80/443 are denied. Validation runs before dispatch and Playwright
+  routing checks redirects/subresources. Service workers and WebSockets are
+  blocked to prevent alternate private-network paths.
+- **Workspace confinement:** screenshots and optional HTML dumps are resolved
+  through `WorkspaceRoot`; absolute paths, `..` traversal and symlink escapes
+  fail closed.
+- **Ephemeral contexts:** each actor/session receives a separate non-persistent
+  Chromium context, so cookies/local storage/cache never cross actors or runs.
+  Application shutdown closes Chromium and discards all contexts.
+- **Resource bounds:** internal operation/navigation timeout defaults to 30s;
+  viewport defaults to 1280×800; DOM source/output, links and screenshot size
+  are capped. ERA's provider-level hard timeout remains independently active.
+- **Offline CI:** `SimulatedBrowserTransport` exercises navigation, screenshots,
+  dynamic DOM extraction and isolated interaction state without sockets or a
+  browser binary. Playwright is lazy-loaded only on the first production action.
+
+### Install Chromium on a browser worker
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -e '.[dev,browser]'
+playwright install --with-deps chromium
+```
+
+No browser binary is needed to run the unit suite.
+
+### Configuration
+
+```dotenv
+ERA_BROWSER_HEADLESS=true
+ERA_BROWSER_TIMEOUT_SECONDS=30.0
+ERA_BROWSER_VIEWPORT_WIDTH=1280
+ERA_BROWSER_VIEWPORT_HEIGHT=800
+ERA_BROWSER_USER_AGENT=ERA-Agent/0.8.0 (+https://github.com/sajanji15859-cmyk/ERA-AI)
+```
+
+The rule planner recognizes goals such as:
+
+- `https://example.com website ka screenshot lo`
+- `example.org website se live data nikaalo`
+
+It emits `browser.navigate` followed by `browser.screenshot` or
+`browser.extract_dom`. Verifier kinds `screenshot_exists` and `dom_extracted`
+validate the resulting image/structured DOM, and screenshot/HTML paths are
+reported as run artifacts.
+
+### Validation
+
+```bash
+pytest          # 651 passed, 1 optional live-PostgreSQL test skipped
+ruff check .    # clean
+```
+
+Phase 4A adds **52 tests** (provider contract, SSRF/private DNS, workspace and
+symlink escapes, DOM/Markdown/links, interaction validation, actor/session
+isolation, confirmation+audit flow, planner, verifier, settings and runtime
+wiring). Total: **652 collected**.
+
+---
+
+## Phase 4A.1: Browser Security & Reliability Hardening (delivered)
+
+ERA AI `0.8.1` hardens stateful browser workflows before the next major
+capability phase.
+
+### Run-scoped lifecycle and approval continuity
+
+- `AgentService` derives an internal `agent:<run_id>` execution scope. Browser
+  contexts no longer share state merely because two runs used the same API key.
+- The scope is persisted on `PendingConfirmation` by Alembic revision
+  `0005_phase_4a1_browser_hardening`. An approval arriving through a later HTTP
+  request resumes the exact browser context that requested it.
+- Waiting runs retain their context; completed, failed and budget-exhausted runs
+  discard it. Exceptions also trigger best-effort fail-closed cleanup.
+- Chromium enforces a maximum active-context count and reaps idle contexts.
+
+### Side-effect and timeout safety
+
+- `browser.click`, `browser.fill` and `browser.submit` declare themselves
+  non-retryable. `ExecutionService` forces one transport attempt even when a
+  transient provider code would normally be retried.
+- Agent post-condition failures cannot automatically repeat these actions.
+- Playwright commands carry absolute deadlines and cancellation flags. Expired
+  queued commands are rejected before dispatch, and the command queue is
+  bounded.
+- A mutating operation that times out after dispatch returns
+  `SIDE_EFFECT_UNKNOWN`, is never retried and quarantines its browser context.
+- Browser's internal timeout reserves margin inside ERA's outer provider
+  deadline, preventing abandoned timeout threads from routinely outliving the
+  dispatch budget.
+
+### Vault-backed browser input
+
+Agents must use `value_ref: "vault:browser/<name>"` for `browser.fill`.
+Plaintext `text` remains available to direct API callers but is treated as a
+secret field and redacted from confirmation/audit/event surfaces. Raw fill text
+proposed inside an agent plan is erased and rejected before dispatch or
+persistence. Browser vault resolution is owner-bound, so one actor cannot use
+another actor's stored browser credential. Vault admins can set
+`owner_user_id` when storing the secret for its intended existing user.
+
+```json
+{
+  "action_type": "browser.fill",
+  "params": {
+    "selector": "#password",
+    "value_ref": "vault:browser/login_password"
+  }
+}
+```
+
+### Central provider-result boundary
+
+Every provider result now passes through one runtime boundary before it reaches
+an API response, agent observation, idempotency row or job row:
+
+- recursive secret-key and unmistakable token-pattern redaction;
+- JSON-compatible type, finite-number, depth, key and collection validation;
+- a configurable encoded size cap (`ERA_PROVIDER_RESULT_MAX_BYTES`);
+- unsafe output fails once after invocation and is never placed in a retry loop.
+
+### Additional browser worker controls
+
+```dotenv
+ERA_BROWSER_MAX_CONTEXTS=32
+ERA_BROWSER_CONTEXT_IDLE_SECONDS=300.0
+ERA_BROWSER_COMMAND_QUEUE_SIZE=128
+ERA_BROWSER_PROXY_SERVER=
+ERA_PROVIDER_RESULT_MAX_BYTES=524288
+```
+
+Production deployments should set `ERA_BROWSER_PROXY_SERVER` to a
+credential-free, default-deny egress proxy and enforce private/metadata network
+drops at the container/network-namespace layer. Chromium also disables QUIC,
+non-proxied WebRTC UDP, service workers and page WebSockets.
+
+### Tests
+
+```bash
+pytest          # 683 passed, 2 skipped, 685 collected
+ruff check .    # clean
+```
+
+Phase 4A.1 contributes **33 additional collected cases** (30 in dedicated new
+test files plus expanded error-taxonomy and vault-owner API coverage). The two
+skips are the existing opt-in live PostgreSQL test and the new opt-in real Chromium smoke
+test. Run the latter after installing Chromium:
+
+```bash
+ERA_TEST_BROWSER=1 pytest -m browser tests/test_browser_playwright_e2e.py
+```

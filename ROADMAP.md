@@ -143,24 +143,102 @@ Delivered:
 
 ---
 
-## § Browser Automation Architecture (Future Design Scope)
+## § Phase 4A — Self-Hosted Browser Automation (implemented)
 
-### Objective
-Enable ERA to navigate, interact with, and extract content from arbitrary modern web applications (SPAs, dynamic dashboards, login-protected portals) through a secure, self-hosted headless browser environment.
+Phase 4A delivers secure dynamic-site automation through self-hosted Playwright
+Chromium without creating a second execution path.
 
-### Design Principles
-1. **Sandboxed Headless Chromium (Playwright)**
-   - Run self-hosted Chromium inside isolated process containers with restricted network namespaces and strict CPU/memory limits.
-   - Separate browser sessions per actor with ephemeral browser contexts that are discarded after task completion to prevent cross-session cookie/credential leakage.
+### Delivered actions and policy
 
-2. **Actions & Risk Tiers**
-   - `browser.navigate` — `RiskLevel.SENSITIVE`: Navigate to allowed HTTP/HTTPS URLs with SSRF protections (blocking loopback/link-local/private RFC1918 ranges).
-   - `browser.screenshot` — `RiskLevel.SENSITIVE`: Capture page viewport screenshots into workspace sandbox.
-   - `browser.extract_dom` — `RiskLevel.SAFE`: Extract structured accessibility tree / text content.
-   - `browser.click` / `browser.fill` — `RiskLevel.MUTATING`: Interactive page inputs (approval-gated when on external origin).
-   - `browser.submit_form` — `RiskLevel.MUTATING`: Submit actions (approval-gated).
+| Action | Risk | Default gate | Purpose |
+|---|---|---|---|
+| `browser.navigate` | `SENSITIVE` | `ALLOW` | Open a public HTTP(S) URL after SSRF validation |
+| `browser.screenshot` | `SENSITIVE` | `ALLOW` | Save a page/element PNG or JPEG in the workspace |
+| `browser.extract_dom` | `SAFE` | `ALLOW` | Return rendered text, Markdown and resolved links; optional HTML dump |
+| `browser.click` | `MUTATING` | `CONFIRM` | Click by CSS selector or visible text |
+| `browser.fill` | `MUTATING` | `CONFIRM` | Fill an input in the current context |
+| `browser.submit` | `MUTATING` | `CONFIRM` | Submit the selected/current form |
 
-3. **Security Invariants**
-   - Headless browser never accesses master credential vault directly — session credentials/cookies are injected through ephemeral context handles.
-   - Path containment for downloaded assets and screenshots via `WorkspaceRoot`.
-   - Timeout and resource caps: strict per-navigation wall-clock budget (30s default).
+All six actions have strict `ACTION_PARAM_SCHEMAS` with
+`additionalProperties: false`, belong to the `browser` capability domain and
+are available to both `Role.USER` and `Role.ADMIN`. Every call flows through
+the existing permission → confirmation → append-only audit → reliability gate.
+
+### Provider and sandbox
+
+- `BrowserProvider` uses a modular `BrowserTransport`; production defaults to
+  `PlaywrightBrowserTransport`, while `SimulatedBrowserTransport` provides a
+  deterministic, socket-free CI path.
+- Playwright runs on a dedicated owner thread so Chromium contexts remain safe
+  under ERA's hard-timeout worker-thread boundary.
+- Non-persistent contexts are keyed by actor/session, isolating cookies, cache,
+  local storage and page state. Shutdown discards all contexts.
+- `validate_public_url` runs during validation and immediately before every
+  top-level navigation. Chromium request routing rechecks redirects and
+  subresources; private/loopback/link-local/metadata addresses, disallowed
+  ports/schemes and WebSockets are blocked.
+- Screenshots and optional HTML dumps are resolved through `WorkspaceRoot`;
+  traversal, absolute paths and symlink escapes are rejected.
+- Browser timeout and viewport defaults are bounded at 30 seconds and
+  1280×800. DOM output, HTML source, link count and screenshot bytes are capped.
+
+### Agent integration
+
+The offline rule planner recognizes explicit URL screenshot and dynamic/live
+extraction requests before the static website-builder rule. New verifier kinds
+`screenshot_exists` and `dom_extracted` validate artifacts and structured DOM
+results instead of blindly trusting tool success. `build_browser_provider` is
+wired into `build_agent_container`.
+
+### Configuration
+
+- `ERA_BROWSER_HEADLESS=true`
+- `ERA_BROWSER_TIMEOUT_SECONDS=30.0`
+- `ERA_BROWSER_VIEWPORT_WIDTH=1280`
+- `ERA_BROWSER_VIEWPORT_HEIGHT=800`
+- `ERA_BROWSER_USER_AGENT=ERA-Agent/0.8.0 (+https://github.com/sajanji15859-cmyk/ERA-AI)`
+
+### Validation
+
+The repository baseline collected 600 tests (599 passed + one optional live
+PostgreSQL skip). Phase 4A adds **52 tests**; current result is **651 passed, 1
+skipped (652 collected)**, with `ruff check .` clean.
+
+---
+
+## § Phase 4A.1 — Browser Security & Reliability Hardening (implemented)
+
+Before moving to wider browser workflows, ERA closes the state and side-effect
+ambiguities identified after Phase 4A:
+
+1. **True run isolation:** `ExecutionContext.execution_scope` is derived by the
+   server from `run_id`; confirmation revision `0005` preserves it across
+   approval requests; terminal runs clean up their ephemeral contexts.
+2. **No duplicate interactions:** click/fill/submit opt out of provider retries
+   and agent verification retries. Timeout after dispatch is classified as
+   `SIDE_EFFECT_UNKNOWN` and quarantines the context.
+3. **Cancellable bounded worker:** absolute command deadlines, pre-dispatch
+   cancellation, bounded queue, active-context cap and idle reaping.
+4. **Secret-safe input:** agent fills use owner-bound
+   `vault:browser/<name>` references. Direct plaintext fill is redacted, while
+   raw agent-plan fill values are erased and denied before persistence.
+5. **Safe result boundary:** all providers now receive centralized JSON/type,
+   size and recursive token/key redaction before results can reach responses,
+   observations, jobs or idempotency storage.
+6. **Egress controls:** optional operator-controlled browser proxy plus Chromium
+   QUIC/non-proxied-WebRTC restrictions; application SSRF routing remains
+   defense-in-depth, not a replacement for production network namespaces.
+7. **Real-browser CI hook:** an opt-in `browser` pytest marker exercises actual
+   Playwright navigation, rendered DOM and screenshots when Chromium/network
+   are available; default CI remains binary-free.
+
+Version: **0.8.1**. Validation: **683 passed, 2 optional skips, 685 collected**;
+`ruff check .` clean. The suite grew by **33 collected cases** over Phase 4A.
+
+### Recommended next phase
+
+With these P0 hardening items complete, proceed to **Phase 4B — Reliable Browser
+Workflows**: accessibility-tree element handles, tabs/popups, downloads,
+iframes/shadow DOM, post-condition receipts and resumable login workflows.
+Keep payments and irreversible transactions outside autonomous operation until
+a dedicated strong-confirmation and idempotency design is delivered.

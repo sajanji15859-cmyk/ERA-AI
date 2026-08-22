@@ -37,9 +37,13 @@ def store_or_rotate_secret(body: VaultSecretIn,
     Returns metadata only — the value is shown exactly once in the request and
     never again, mirroring the API-key lifecycle.
     """
+    owner_user_id = body.owner_user_id or user.id
+    if body.owner_user_id and container.auth_service.get_user(body.owner_user_id) is None:
+        raise HTTPException(status_code=404, detail="owner user not found")
     try:
         secret = container.vault_service.store_or_rotate_secret(
-            domain=body.domain, name=body.name, value=body.value, actor_id=user.id,
+            domain=body.domain, name=body.name, value=body.value,
+            actor_id=user.id, owner_user_id=owner_user_id,
         )
     except VaultError as exc:
         raise _vault_error_http(exc) from None

@@ -1,7 +1,7 @@
 """Agent runtime wiring (Phase 3A).
 
-Builds the agent-enabled container: the real Workspace + Web providers take
-over their catalogued action types from the StubProvider, an OpenAI-compatible
+Builds the agent-enabled container: real Workspace, Web and Browser providers
+take over their catalogued action types from the StubProvider, an OpenAI-compatible
 LLM is wired when a key is configured (otherwise the agent runs in offline
 deterministic mode), and the AgentService is attached to the container.
 
@@ -21,6 +21,7 @@ from era.config import Settings
 from era.container import Container, build_container
 from era.providers import StubProvider
 from era.providers.booking import BookingProvider
+from era.providers.browser import BrowserProvider, BrowserTransport
 from era.providers.code_exec import CodeExecProvider
 from era.providers.email_smtp import EmailSmtpProvider
 from era.providers.github import GitHubProvider
@@ -73,6 +74,31 @@ def build_llm_provider(settings: Settings, vault_service=None):
         api_key=api_key,
         model=settings.agent_llm_model,
         timeout_seconds=float(settings.web_timeout_seconds),
+    )
+
+
+def build_browser_provider(settings: Settings, workspace_root: Path,
+                           transport: BrowserTransport | None = None,
+                           secret_resolver: VaultRefResolver | None = None) -> BrowserProvider:
+    """Build the self-hosted Playwright browser provider (Phase 4A).
+
+    The Playwright package/Chromium process is loaded lazily on first browser
+    action.  Tests and offline deployments may inject a simulator transport.
+    """
+
+    return BrowserProvider(
+        workspace_root=workspace_root,
+        transport=transport,
+        headless=bool(settings.browser_headless),
+        timeout_seconds=float(settings.browser_timeout_seconds),
+        viewport_width=int(settings.browser_viewport_width),
+        viewport_height=int(settings.browser_viewport_height),
+        user_agent=settings.browser_user_agent,
+        max_contexts=int(settings.browser_max_contexts),
+        context_idle_seconds=float(settings.browser_context_idle_seconds),
+        command_queue_size=int(settings.browser_command_queue_size),
+        proxy_server=settings.browser_proxy_server,
+        secret_resolver=secret_resolver,
     )
 
 
@@ -175,8 +201,11 @@ def build_agent_container(settings: Settings | None = None) -> Container:
                       user_agent=settings.web_user_agent,
                       workspace_root=workspace_root)
 
-    # Phase 3C, 3D & 3H: provider secrets and real providers.
+    # Phase 3C, 3D, 3H & 4A: provider secrets and real providers.
     vault_resolver = VaultRefResolver()
+    browser = build_browser_provider(
+        settings, workspace_root, secret_resolver=vault_resolver,
+    )
     email = build_email_provider(settings, vault_resolver)
     github = build_github_provider(settings, vault_resolver)
     code_exec = build_code_exec_provider(settings, workspace_root)
@@ -184,8 +213,8 @@ def build_agent_container(settings: Settings | None = None) -> Container:
     image_gen = build_image_gen_provider(settings, workspace_root, vault_resolver)
     booking = build_booking_provider(settings, vault_resolver)
 
-    providers = [workspace, web]
-    claimed = workspace.action_types | web.action_types
+    providers = [workspace, web, browser]
+    claimed = workspace.action_types | web.action_types | browser.action_types
     if email is not None:
         providers.append(email)
         claimed |= email.action_types

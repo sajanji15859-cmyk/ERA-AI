@@ -34,6 +34,14 @@ class ActionType(StrEnum):
     WEB_FETCH = "web.fetch"          # SENSITIVE: SSRF surface, see docstring
     WEB_DOWNLOAD = "web.download"
 
+    # --- browser automation (Phase 4A) ---------------------------------------
+    BROWSER_NAVIGATE = "browser.navigate"
+    BROWSER_SCREENSHOT = "browser.screenshot"
+    BROWSER_EXTRACT_DOM = "browser.extract_dom"
+    BROWSER_CLICK = "browser.click"
+    BROWSER_FILL = "browser.fill"
+    BROWSER_SUBMIT = "browser.submit"
+
     # --- email ---------------------------------------------------------------
     EMAIL_READ = "email.read"
     EMAIL_SEARCH = "email.search"
@@ -138,6 +146,95 @@ ACTION_PARAM_SCHEMAS: dict[str, dict[str, Any]] = {
             "api_key": {"type": "string"},
         },
         "required": ["url", "path"],
+    },
+    # browser automation (Phase 4A) — deliberately strict, no undeclared args
+    ActionType.BROWSER_NAVIGATE.value: {
+        "type": "object",
+        "properties": {
+            "url": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048,
+                "description": "public HTTP(S) URL",
+            },
+            "wait_until": {
+                "type": "string",
+                "enum": ["commit", "domcontentloaded", "load", "networkidle"],
+            },
+        },
+        "required": ["url"],
+        "additionalProperties": False,
+    },
+    ActionType.BROWSER_SCREENSHOT.value: {
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048,
+                "description": "workspace-relative .png/.jpg output path",
+            },
+            "selector": {"type": "string", "minLength": 1, "maxLength": 1000},
+            "full_page": {"type": "boolean"},
+        },
+        "required": ["path"],
+        "additionalProperties": False,
+    },
+    ActionType.BROWSER_EXTRACT_DOM.value: {
+        "type": "object",
+        "properties": {
+            "selector": {"type": "string", "minLength": 1, "maxLength": 1000},
+            "max_chars": {"type": "integer", "minimum": 1, "maximum": 100000},
+            "save_html_path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048,
+                "description": "optional workspace-relative HTML dump path",
+            },
+        },
+        "required": [],
+        "additionalProperties": False,
+    },
+    ActionType.BROWSER_CLICK.value: {
+        "type": "object",
+        "properties": {
+            "selector": {"type": "string", "minLength": 1, "maxLength": 1000},
+            "text": {"type": "string", "minLength": 1, "maxLength": 1000},
+            "exact": {"type": "boolean"},
+        },
+        "required": [],
+        "oneOf": [
+            {"required": ["selector"], "not": {"required": ["text"]}},
+            {"required": ["text"], "not": {"required": ["selector"]}},
+        ],
+        "additionalProperties": False,
+    },
+    ActionType.BROWSER_FILL.value: {
+        "type": "object",
+        "properties": {
+            "selector": {"type": "string", "minLength": 1, "maxLength": 1000},
+            "text": {"type": "string", "maxLength": 2000},
+            "value_ref": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256,
+                "description": "vault:browser/<name> reference for secret input",
+            },
+        },
+        "required": ["selector"],
+        "oneOf": [
+            {"required": ["text"], "not": {"required": ["value_ref"]}},
+            {"required": ["value_ref"], "not": {"required": ["text"]}},
+        ],
+        "additionalProperties": False,
+    },
+    ActionType.BROWSER_SUBMIT.value: {
+        "type": "object",
+        "properties": {
+            "selector": {"type": "string", "minLength": 1, "maxLength": 1000},
+        },
+        "required": [],
+        "additionalProperties": False,
     },
     # email
     ActionType.EMAIL_READ.value: {
@@ -624,6 +721,14 @@ _SPECS: list[ActionSpec] = [
     # SENSITIVE, not SAFE: SSRF / private-network guard required by the provider.
     _spec(ActionType.WEB_FETCH, RiskLevel.SENSITIVE, "web", ("api_key",)),
     _spec(ActionType.WEB_DOWNLOAD, RiskLevel.MUTATING, "web", ("api_key",)),
+
+    # browser automation (Phase 4A)
+    _spec(ActionType.BROWSER_NAVIGATE, RiskLevel.SENSITIVE, "browser"),
+    _spec(ActionType.BROWSER_SCREENSHOT, RiskLevel.SENSITIVE, "browser"),
+    _spec(ActionType.BROWSER_EXTRACT_DOM, RiskLevel.SAFE, "browser"),
+    _spec(ActionType.BROWSER_CLICK, RiskLevel.MUTATING, "browser"),
+    _spec(ActionType.BROWSER_FILL, RiskLevel.MUTATING, "browser", ("text",)),
+    _spec(ActionType.BROWSER_SUBMIT, RiskLevel.MUTATING, "browser"),
 
     # email
     _spec(ActionType.EMAIL_READ, RiskLevel.SENSITIVE, "email", ("token", "refresh_token")),

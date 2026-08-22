@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from urllib.parse import urlsplit
 
 from era.agents.budget import AgentBudget
 from era.agents.content import resolve_pack
@@ -26,6 +27,7 @@ from era.core.llm import LLMProvider, LLMRequest
 from era.core.result import ProviderErrorCode, ToolError
 
 TASK_ID_RE = re.compile(r"^[a-z0-9_\-]{1,64}$")
+DEFAULT_BROWSER_EXTRACT_CHARS = 50_000
 
 _PLAN_PROMPT = """You are the planner of a safe, tool-using agent. Return ONLY a JSON object:
 {"summary": "...", "tasks": [{"id": "...", "title": "...", "action_type": "...", "params": {...}, "verify": {...} | null, "required": true | false, "depends_on": []}]}
@@ -37,7 +39,10 @@ Rules:
 - Prefer writing files into a directory named after the topic.
 - Keep the plan under 15 tasks. Make destructive or risky steps "required": false unless essential.
 - verify spec kinds: action_success, file_exists {"path","min_bytes"}, text_contains {"path","required":[...]},
-  html_valid {"path","required_elements":[...],"keywords":[...]}, links_resolve {"pages":[...]}.
+  html_valid {"path","required_elements":[...],"keywords":[...]}, links_resolve {"pages":[...]},
+  screenshot_exists {"path","min_bytes"}, dom_extracted {"min_chars"}.
+- For dynamic/SPA URLs use browser.navigate then browser.extract_dom. For URL screenshots use
+  browser.navigate then browser.screenshot with a workspace-relative path.
 Catalogued actions: {actions}"""
 
 
@@ -87,6 +92,36 @@ def _drop_leading_filler(text: str) -> str:
     return text
 
 
+def _extract_browser_url(goal: str) -> str | None:
+    """Extract an explicit public-web URL/domain from a browsing goal."""
+
+    absolute = re.search(r"https?://[^\s<>\"']+", goal, flags=re.IGNORECASE)
+    if absolute:
+        return absolute.group(0).rstrip(".,;:!?)]}")
+    domain = re.search(
+        r"(?<![@\w])((?:www\.)?[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?"
+        r"\.(?:com|org|net|io|ai|dev|app|in|co|edu|gov))(?:/[^\s<>\"']*)?",
+        goal,
+        flags=re.IGNORECASE,
+    )
+    if domain:
+        return "https://" + domain.group(0).rstrip(".,;:!?)]}")
+    return None
+
+
+def _is_screenshot_goal(lowered: str) -> bool:
+    return any(term in lowered for term in (
+        "screenshot", "screen shot", "screen capture", "स्क्रीनशॉट",
+    ))
+
+
+def _is_dynamic_browse_goal(lowered: str) -> bool:
+    return any(term in lowered for term in (
+        "live data", "dynamic page", "spa page", "browse", "extract", "scrape",
+        "website se", "site se", "nikaalo", "nikalo", "निकालो",
+    ))
+
+
 class RulePlanner:
     """Deterministic offline planner (no LLM, no cost)."""
 
@@ -94,6 +129,11 @@ class RulePlanner:
 
     def plan(self, goal: str) -> Plan:
         lowered = goal.lower()
+        browser_url = _extract_browser_url(goal)
+        # Browser intent must win over the older website-builder keyword rule:
+        # "example.com website ka screenshot lo" is browsing, not site creation.
+        if browser_url and (_is_screenshot_goal(lowered) or _is_dynamic_browse_goal(lowered)):
+            return self._browser_plan(goal, browser_url, _is_screenshot_goal(lowered))
         if "website" in lowered or "web site" in lowered or " site" in lowered:
             return self._website_plan(goal)
         return self._generic_plan(goal)
@@ -123,6 +163,45 @@ class RulePlanner:
         return []
 
     # -- patterns -------------------------------------------------------------
+    def _browser_plan(self, goal: str, url: str, screenshot: bool) -> Plan:
+        navigate = Task(
+            id="browser-navigate",
+            title=f"Open dynamic page: {url}",
+            action_type="browser.navigate",
+            params={"url": url, "wait_until": "domcontentloaded"},
+            verify={"kind": "action_success"},
+        )
+        if screenshot:
+            host = urlsplit(url).hostname or "page"
+            name = re.sub(r"[^a-z0-9]+", "-", host.lower()).strip("-") or "page"
+            path = f"screenshots/{name}.png"
+            capture = Task(
+                id="browser-screenshot",
+                title=f"Capture screenshot of {host}",
+                action_type="browser.screenshot",
+                params={"path": path},
+                verify={"kind": "screenshot_exists", "path": path, "min_bytes": 32},
+                depends_on=[navigate.id],
+            )
+            summary = f"Open {url}, capture a viewport screenshot, and verify the artifact."
+            return Plan(goal=goal, summary=summary, tasks=[navigate, capture],
+                        created_by="offline")
+
+        extract = Task(
+            id="browser-extract-dom",
+            title=f"Extract live content from {url}",
+            action_type="browser.extract_dom",
+            params={"max_chars": DEFAULT_BROWSER_EXTRACT_CHARS},
+            verify={"kind": "dom_extracted", "min_chars": 1},
+            depends_on=[navigate.id],
+        )
+        return Plan(
+            goal=goal,
+            summary=f"Open {url} in an isolated browser and extract rendered text, Markdown and links.",
+            tasks=[navigate, extract],
+            created_by="offline",
+        )
+
     def _website_plan(self, goal: str) -> Plan:
         subject = _extract_subject(goal)
         pack = resolve_pack(subject)

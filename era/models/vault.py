@@ -28,8 +28,8 @@ class VaultSecret(Base):
     domain = Column(String, nullable=False, index=True)
     #: Provider-scoped secret name (e.g. ``"smtp_password"``).
     name = Column(String, nullable=False)
-    #: The server-derived user id of whoever created the secret (auditability).
-    #: NEVER a client-supplied identity.
+    #: Intended owning user. Defaults to the server-derived managing actor; an
+    #: authenticated admin may explicitly assign another existing user.
     owner_user_id = Column(String, nullable=False, index=True)
     #: Encryption algorithm id (currently only :data:`era.security.vault.ALGORITHM`).
     algorithm = Column(String, nullable=False, default=ALGORITHM)

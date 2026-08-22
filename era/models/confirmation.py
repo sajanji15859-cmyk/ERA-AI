@@ -22,6 +22,9 @@ class PendingConfirmation(Base):
 
     id = Column(String, primary_key=True)  # UUID hex
     actor_id = Column(String, nullable=True)  # initiating user (Phase 2A actor-bound)
+    # Server-derived scope retained across an out-of-band approval so a
+    # stateful provider resumes the exact actor/run context that requested it.
+    execution_scope = Column(String, nullable=True)
     action_type = Column(String, nullable=False)
     action_hash = Column(String, nullable=False)  # canonical hash of (type+params+risk)
     risk_level = Column(String, nullable=False)

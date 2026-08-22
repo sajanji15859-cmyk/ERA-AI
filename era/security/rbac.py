@@ -82,15 +82,30 @@ ROLE_PERMISSIONS: dict[Role, frozenset[str]] = {
     }),
 }
 
-#: Capability domains each role may act on. ``None`` = wildcard (all domains).
-#: ``device`` is deliberately NOT granted to the default ``user`` role: device
-#: automation is a high-risk boundary and stays admin-only until a dedicated
-#: on-device capability phase.
-ACTION_DOMAIN_ALLOWLIST: dict[Role, frozenset[str] | None] = {
-    Role.ADMIN: None,  # wildcard: every capability domain
+#: Capability domains each role may act on. Both role entries are explicit so
+#: an unknown future domain remains denied until deliberately reviewed (fail
+#: closed). ``device`` is deliberately NOT granted to the default ``user``
+#: role: device automation remains an admin-only boundary.
+_ALL_ACTION_DOMAINS = frozenset({
+    "core",
+    "web",
+    "browser",
+    "email",
+    "whatsapp",
+    "booking",
+    "file",
+    "device",
+    "github",
+    "code",
+    "image",
+})
+
+ACTION_DOMAIN_ALLOWLIST: dict[Role, frozenset[str]] = {
+    Role.ADMIN: _ALL_ACTION_DOMAINS,
     Role.USER: frozenset({
         "core",
         "web",
+        "browser",
         "email",
         "whatsapp",
         "booking",
@@ -129,14 +144,11 @@ def role_has_permission(role: Role | str | None, permission: str) -> bool:
 def role_domain_allowed(role: Role | str | None, domain: str | None) -> bool:
     """True iff ``role`` may act on capability domain ``domain``.
 
-    ``None``/unknown domain or unknown role -> False (fail closed). Admin is a
-    wildcard (``None`` in the allowlist means *everything*).
+    ``None``/unknown domain or unknown role -> False (fail closed). Admin has
+    every explicitly reviewed domain, not a wildcard for future domains.
     """
     r = coerce_role(role)
     if r is None or not domain:
         return False
-    allowed = ACTION_DOMAIN_ALLOWLIST.get(r)
-    if allowed is None:
-        # ADMIN wildcard.
-        return True
+    allowed = ACTION_DOMAIN_ALLOWLIST.get(r, frozenset())
     return domain in allowed
