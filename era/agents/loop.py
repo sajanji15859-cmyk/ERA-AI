@@ -352,10 +352,14 @@ class AgentLoop:
                           observation: Observation | None) -> None:
         if observation is None:
             return
-        if task.action_type == "fs.write":
+        if task.action_type in {"fs.write", "browser.screenshot"}:
             path = task.params.get("path")
             if path:
                 memory.record_artifact(str(path))
+        if task.action_type == "browser.extract_dom":
+            html_path = observation.data.get("html_path") or task.params.get("save_html_path")
+            if html_path:
+                memory.record_artifact(str(html_path))
         if self.long_term_memory is not None and memory.recall("actor_id"):
             try:
                 self.long_term_memory.put(

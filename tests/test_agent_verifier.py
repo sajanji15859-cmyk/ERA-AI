@@ -89,3 +89,66 @@ def test_links_resolve_ignores_external_links(ws):
 def test_path_escape_fails_closed(ws):
     evil = _task(kind="file_exists", path="../../etc/passwd")
     assert not ws.verify(evil, _obs()).ok
+
+
+def test_screenshot_exists_verifies_workspace_image(ws):
+    path = ws.workspace_root / "site" / "capture.png"
+    path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * 40)
+    task = _task(kind="screenshot_exists", path="site/capture.png", min_bytes=32)
+    observation = Observation(
+        task_id="t", action_type="browser.screenshot", status="executed",
+        data={"path": "site/capture.png", "bytes": path.stat().st_size},
+    )
+    assert ws.verify(task, observation).ok
+
+
+def test_screenshot_exists_rejects_missing_invalid_and_escape(ws):
+    observation = Observation(
+        task_id="t", action_type="browser.screenshot", status="executed",
+        data={},
+    )
+    assert not ws.verify(
+        _task(kind="screenshot_exists", path="site/missing.png"), observation,
+    ).ok
+    invalid = ws.workspace_root / "site" / "invalid.png"
+    invalid.write_bytes(b"not an image, despite the extension")
+    assert not ws.verify(
+        _task(kind="screenshot_exists", path="site/invalid.png"), observation,
+    ).ok
+    assert not ws.verify(
+        _task(kind="screenshot_exists", path="../../escape.png"), observation,
+    ).ok
+
+
+def test_dom_extracted_verifies_structured_browser_output(ws):
+    task = _task(kind="dom_extracted", min_chars=10)
+    observation = Observation(
+        task_id="t", action_type="browser.extract_dom", status="executed",
+        data={
+            "text": "A rendered dynamic dashboard",
+            "markdown": "# Dashboard",
+            "links": [{"text": "Details", "url": "https://example.com/details"}],
+        },
+    )
+    verdict = ws.verify(task, observation)
+    assert verdict.ok
+    assert verdict.details["links"] == 1
+
+
+def test_dom_extracted_fails_closed_on_empty_malformed_or_failed_result(ws):
+    task = _task(kind="dom_extracted", min_chars=5)
+    empty = Observation(
+        task_id="t", action_type="browser.extract_dom", status="executed",
+        data={"text": "", "markdown": "", "links": []},
+    )
+    malformed = Observation(
+        task_id="t", action_type="browser.extract_dom", status="executed",
+        data={"text": "enough"},
+    )
+    failed = Observation(
+        task_id="t", action_type="browser.extract_dom", status="failed",
+        data={"text": "enough", "markdown": "", "links": []},
+    )
+    assert not ws.verify(task, empty).ok
+    assert not ws.verify(task, malformed).ok
+    assert not ws.verify(task, failed).ok

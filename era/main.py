@@ -1,7 +1,7 @@
 """FastAPI application factory.
 
 With ``ERA_AGENT_ENABLED=true`` the app builds the agent runtime container
-(real Workspace/Web providers + AgentService) and mounts the agent routes;
+(real Workspace/Web/Browser providers + AgentService) and mounts agent routes;
 otherwise the Phase 1C–2A container and routes are exactly as before.
 """
 
@@ -38,10 +38,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if settings.agent_enabled:
         from era.agent_runtime import build_agent_container
         container = build_agent_container(settings)
-        title = "ERA AI — Agent (Phase 3H)"
+        title = "ERA AI — Agent (Phase 4A)"
     else:
         container = build_container(settings)
-        title = "ERA AI — Phase 3H"
+        title = "ERA AI — Phase 4A"
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -51,6 +51,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             container.job_service.shutdown()
         if container.schedule_service is not None:
             container.schedule_service.shutdown()
+        # Phase 4A: stop Chromium and discard every ephemeral browser context.
+        for provider in container.registry.list_providers():
+            close = getattr(provider, "close", None)
+            if callable(close):
+                close()
 
     app = FastAPI(title=title, version=settings.app_version, lifespan=lifespan)
     app.state.container = container

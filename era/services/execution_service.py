@@ -279,13 +279,13 @@ class ExecutionService:
     def _dispatch_and_record(self, action, ctx, decision, policy_version, confirmation_id):
         provider = self.registry.get(action.action_type)
         if provider is None:
-            outcome, success, summary, error_code = (
-                Outcome.REJECTED, False, "no provider registered for action",
-                ProviderErrorCode.NOT_IMPLEMENTED,
-            )
+            outcome = Outcome.REJECTED
+            result = ActionResult(success=False, summary="no provider registered for action")
+            error_code = ProviderErrorCode.NOT_IMPLEMENTED
         else:
-            outcome, success, summary, error_code = self._run_provider(provider, action, ctx)
+            outcome, result, error_code = self._run_provider(provider, action, ctx)
 
+        summary = result.summary
         risk_level, domain, provider_id, credential_ref = self._meta(action.action_type, ctx)
         self._record(action, ctx, risk_level, decision, outcome, policy_version,
                      domain, provider_id, credential_ref, confirmation_id=confirmation_id,
@@ -293,9 +293,8 @@ class ExecutionService:
 
         status = {Outcome.EXECUTED: "executed", Outcome.FAILED: "failed",
                   Outcome.REJECTED: "rejected"}[outcome]
-        return ExecutionResponse(status=status, decision=decision,
-                                 result=ActionResult(success=success, summary=summary),
-                                 message=None if success else summary)
+        return ExecutionResponse(status=status, decision=decision, result=result,
+                                 message=None if result.success else summary)
 
     def _timeout_budget(self) -> float:
         return float(getattr(self.settings, "provider_timeout_seconds", 0.0) or 0.0)
@@ -307,8 +306,9 @@ class ExecutionService:
             return ctx
         return ctx.model_copy(update={"deadline": time.monotonic() + budget})
 
-    def _run_provider(self, provider, action, ctx) -> tuple[Outcome, bool, str,
-                                                            ProviderErrorCode | None]:
+    def _run_provider(self, provider, action, ctx) -> tuple[
+        Outcome, ActionResult, ProviderErrorCode | None,
+    ]:
         budget = self._timeout_budget()
         dispatch_ctx = self._dispatch_context(ctx)
         breaker = self.circuit_breakers.get(provider.id)
@@ -318,9 +318,14 @@ class ExecutionService:
         # it can never bypass the permission engine or audit-before-execute —
         # it can only block dispatch. OPEN -> deterministic UNAVAILABLE failure.
         if not breaker.allow_request():
-            return (Outcome.FAILED, False,
-                    f"provider {provider.id} circuit open: dispatch blocked",
-                    ProviderErrorCode.UNAVAILABLE)
+            return (
+                Outcome.FAILED,
+                ActionResult(
+                    success=False,
+                    summary=f"provider {provider.id} circuit open: dispatch blocked",
+                ),
+                ProviderErrorCode.UNAVAILABLE,
+            )
 
         # validate -----------------------------------------------------------------
         # Phase 3H: Action-aware schema enforcement (fail closed before dispatch).
@@ -329,17 +334,26 @@ class ExecutionService:
             try:
                 validate_param_schema(action.params, spec.param_schema)
             except ValidationError_ as e:
-                return (Outcome.REJECTED, False, f"parameter validation failed: {e}",
-                        ProviderErrorCode.VALIDATION)
+                return (
+                    Outcome.REJECTED,
+                    ActionResult(success=False, summary=f"parameter validation failed: {e}"),
+                    ProviderErrorCode.VALIDATION,
+                )
             except Exception as e:  # noqa: BLE001
-                return (Outcome.REJECTED, False, f"parameter validation error: {e}",
-                        ProviderErrorCode.VALIDATION)
+                return (
+                    Outcome.REJECTED,
+                    ActionResult(success=False, summary=f"parameter validation error: {e}"),
+                    ProviderErrorCode.VALIDATION,
+                )
 
         try:
             validate_params(action.params, action_type=action.action_type)
         except ValidationError_ as e:
-            return (Outcome.REJECTED, False, f"parameter validation failed: {e}",
-                    ProviderErrorCode.VALIDATION)
+            return (
+                Outcome.REJECTED,
+                ActionResult(success=False, summary=f"parameter validation failed: {e}"),
+                ProviderErrorCode.VALIDATION,
+            )
 
         # Single attempt: a validation rejection is REJECTED (bad input), never
         # retried and never fed to the circuit breaker (it is not a health
@@ -356,7 +370,7 @@ class ExecutionService:
                 ProviderErrorCode.VALIDATION, ProviderErrorCode.FORBIDDEN,
                 ProviderErrorCode.NOT_FOUND, ProviderErrorCode.TIMEOUT,
             ) else ProviderErrorCode.VALIDATION
-            return Outcome.REJECTED, False, str(e), code
+            return Outcome.REJECTED, ActionResult(success=False, summary=str(e)), code
 
         # execute (retryable, deadline-aware) ----------------------------------------
         # with_retry only retries explicitly retryable codes (UNAVAILABLE /
@@ -375,24 +389,30 @@ class ExecutionService:
             )
             if result.success:
                 breaker.record_success()
-                return Outcome.EXECUTED, True, result.summary, None
+                return Outcome.EXECUTED, result, None
             # Failure result (no exception): treat as PROVIDER_ERROR — eligible
             # for the breaker, but not retried (no code to classify it on).
             breaker.record_failure(ProviderErrorCode.PROVIDER_ERROR)
-            return (Outcome.FAILED, False, result.summary or "provider returned failure",
-                    ProviderErrorCode.PROVIDER_ERROR)
+            failed = ActionResult(
+                success=False,
+                summary=result.summary or "provider returned failure",
+            )
+            return Outcome.FAILED, failed, ProviderErrorCode.PROVIDER_ERROR
         except ToolError as e:
             # Timeouts, retry exhaustion and provider-authored failures are FAILED.
             # record_failure ignores ineligible codes (AUTH, FORBIDDEN, TIMEOUT,
             # ...), so authorization/policy failures never trip the breaker.
             breaker.record_failure(e.code)
-            return Outcome.FAILED, False, str(e), e.code
+            return Outcome.FAILED, ActionResult(success=False, summary=str(e)), e.code
         except Exception as e:  # noqa: BLE001
             # INTERNAL is never breaker-eligible, so this is a no-op for the
             # breaker; kept explicit for readability.
             breaker.record_failure(ProviderErrorCode.INTERNAL)
-            return Outcome.FAILED, False, f"provider error: {type(e).__name__}", \
-                ProviderErrorCode.INTERNAL
+            failed = ActionResult(
+                success=False,
+                summary=f"provider error: {type(e).__name__}",
+            )
+            return Outcome.FAILED, failed, ProviderErrorCode.INTERNAL
 
     def _record(self, action, ctx, risk_level, decision, outcome, policy_version,
                 domain, provider_id, credential_ref, confirmation_id=None, result=None,

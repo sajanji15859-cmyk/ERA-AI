@@ -87,6 +87,15 @@ class Settings(BaseSettings):
     web_timeout_seconds: float = 15.0
     web_user_agent: str = "ERA-Agent/0.4"
 
+    # --- Phase 4A: self-hosted browser automation ----------------------------
+    browser_headless: bool = True
+    browser_timeout_seconds: float = 30.0
+    browser_viewport_width: int = 1280
+    browser_viewport_height: int = 800
+    browser_user_agent: str = (
+        "ERA-Agent/0.8.0 (+https://github.com/sajanji15859-cmyk/ERA-AI)"
+    )
+
     # --- Phase 3C: credential vault + provider secrets -----------------------
     #: Master key for the credential vault: 32 bytes as 64 hex chars or 44
     #: base64 chars. Env-only — never commit a real key. Empty = the vault is
@@ -151,7 +160,7 @@ class Settings(BaseSettings):
     booking_partner_url: str = ""
     booking_timeout_seconds: float = 15.0
 
-    app_version: str = "0.7.0"
+    app_version: str = "0.8.0"
 
     # Note: a missing/malformed policy is always DENY-all (hard fail-closed).
     # This is intentionally not configurable — weakening it is a footgun.

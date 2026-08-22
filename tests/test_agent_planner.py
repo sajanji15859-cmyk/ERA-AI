@@ -46,6 +46,32 @@ def test_rule_planner_generic_fallback():
     assert all(t.action_type for t in plan.tasks)
 
 
+def test_rule_planner_recognizes_url_screenshot_before_website_builder():
+    plan = RulePlanner().plan("https://example.com website ka screenshot lo")
+    assert [task.action_type for task in plan.tasks] == [
+        "browser.navigate", "browser.screenshot",
+    ]
+    assert plan.tasks[0].params["url"] == "https://example.com"
+    assert plan.tasks[1].depends_on == ["browser-navigate"]
+    assert plan.tasks[1].verify["kind"] == "screenshot_exists"
+    assert plan.tasks[1].params["path"].endswith("example-com.png")
+
+
+def test_rule_planner_recognizes_dynamic_live_data_extraction():
+    plan = RulePlanner().plan("example.org website se live data nikaalo")
+    assert [task.action_type for task in plan.tasks] == [
+        "browser.navigate", "browser.extract_dom",
+    ]
+    assert plan.tasks[0].params["url"] == "https://example.org"
+    assert plan.tasks[1].verify == {"kind": "dom_extracted", "min_chars": 1}
+
+
+def test_plain_website_creation_still_uses_builder_not_browser():
+    plan = RulePlanner().plan("build a website about photography")
+    assert any(task.action_type == "fs.write" for task in plan.tasks)
+    assert all(not task.action_type.startswith("browser.") for task in plan.tasks)
+
+
 def test_rule_planner_repair_tasks():
     failed = Task(id="page-index", title="Write page", action_type="fs.write",
                   params={"path": "site/index.html"})

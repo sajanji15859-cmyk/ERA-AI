@@ -9,7 +9,10 @@ and are checked after the tool observation:
 * ``text_contains`` — file contains required phrases;
 * ``html_valid`` — file parses as HTML, contains required elements and keywords;
 * ``links_resolve`` — every local link across the listed pages points at a real
-  workspace file.
+  workspace file;
+* ``screenshot_exists`` — a non-empty PNG/JPEG artifact exists in the workspace;
+* ``dom_extracted`` — browser output contains bounded rendered text, Markdown
+  and a link list.
 
 A failed verdict produces a reason that becomes the task's correction note for
 the retry (bounded by the task/budget retry caps).
@@ -88,6 +91,12 @@ class Verifier:
         if kind == "links_resolve":
             return self._check_links_resolve(spec)
 
+        if kind == "screenshot_exists":
+            return self._check_screenshot_exists(spec, observation)
+
+        if kind == "dom_extracted":
+            return self._check_dom_extracted(spec, observation)
+
         return Verdict(ok=False, reason=f"unknown verification kind: {kind!r}")
 
     # -- internal checkers ----------------------------------------------------
@@ -108,6 +117,54 @@ class Verifier:
         if size < min_bytes:
             return Verdict(ok=False, reason=f"file too small: {size} bytes < {min_bytes}")
         return Verdict(ok=True, reason="file exists", details={"path": spec.get("path"), "bytes": size})
+
+    def _check_screenshot_exists(self, spec: dict[str, Any],
+                                 observation: Observation) -> Verdict:
+        if observation.status != "executed":
+            return Verdict(ok=False, reason="screenshot action did not execute")
+        rel_path = str(spec.get("path") or observation.data.get("path") or "")
+        if not rel_path:
+            return Verdict(ok=False, reason="screenshot verification requires a path")
+        path = self._workspace_file(rel_path)
+        min_bytes = int(spec.get("min_bytes", 16))
+        if not path.is_file():
+            return Verdict(ok=False, reason=f"screenshot does not exist: {rel_path}")
+        try:
+            size = path.stat().st_size
+            signature = path.read_bytes()[:8]
+        except OSError as exc:
+            return Verdict(ok=False, reason=f"cannot inspect screenshot: {exc}")
+        if size < min_bytes:
+            return Verdict(ok=False, reason=f"screenshot too small: {size} bytes < {min_bytes}")
+        is_png = signature == b"\x89PNG\r\n\x1a\n"
+        is_jpeg = signature.startswith(b"\xff\xd8\xff")
+        if not (is_png or is_jpeg):
+            return Verdict(ok=False, reason="screenshot is not a PNG or JPEG image")
+        return Verdict(ok=True, reason="screenshot exists",
+                       details={"path": rel_path, "bytes": size})
+
+    @staticmethod
+    def _check_dom_extracted(spec: dict[str, Any], observation: Observation) -> Verdict:
+        if observation.status != "executed":
+            return Verdict(ok=False, reason="DOM extraction action did not execute")
+        text = observation.data.get("text")
+        markdown = observation.data.get("markdown")
+        links = observation.data.get("links")
+        if not isinstance(text, str) or not isinstance(markdown, str) \
+                or not isinstance(links, list):
+            return Verdict(ok=False, reason="DOM extraction result is missing text/markdown/links")
+        min_chars = int(spec.get("min_chars", 1))
+        if len(text.strip()) < min_chars:
+            return Verdict(
+                ok=False,
+                reason=f"extracted DOM text too short: {len(text.strip())} < {min_chars}",
+            )
+        return Verdict(
+            ok=True,
+            reason="rendered DOM extracted",
+            details={"text_chars": len(text), "markdown_chars": len(markdown),
+                     "links": len(links)},
+        )
 
     def _check_text_contains(self, spec: dict[str, Any]) -> Verdict:
         path = self._workspace_file(str(spec.get("path", "")))
