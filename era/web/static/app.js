@@ -849,6 +849,213 @@ function wire() {
   backdrop.addEventListener("click", closeSidebar);
 }
 
+  // Phase 4E: Tab navigation (Chat / Operator / Workflows)
+  initTabNavigation();
+}
+
+function initTabNavigation() {
+  const tabs = document.querySelectorAll(".nav-tab");
+  const main = document.querySelector(".main");
+  const timeline = document.getElementById("timeline");
+  const composer = document.querySelector(".composer");
+  const chatHead = document.querySelector(".chat-head");
+  const operatorPanel = document.getElementById("operator-panel");
+  const workflowsPanel = document.getElementById("workflows-panel");
+
+  function showTab(tabName) {
+    tabs.forEach(t => t.classList.toggle("active", t.dataset.tab === tabName));
+    if (tabName === "chat") {
+      if (chatHead) chatHead.hidden = false;
+      if (timeline) timeline.hidden = false;
+      if (composer) composer.hidden = false;
+      if (operatorPanel) operatorPanel.hidden = true;
+      if (workflowsPanel) workflowsPanel.hidden = true;
+    } else if (tabName === "operator") {
+      if (chatHead) chatHead.hidden = true;
+      if (timeline) timeline.hidden = true;
+      if (composer) composer.hidden = true;
+      if (operatorPanel) operatorPanel.hidden = false;
+      if (workflowsPanel) workflowsPanel.hidden = true;
+      loadOperatorPanel();
+    } else if (tabName === "workflows") {
+      if (chatHead) chatHead.hidden = true;
+      if (timeline) timeline.hidden = true;
+      if (composer) composer.hidden = true;
+      if (operatorPanel) operatorPanel.hidden = true;
+      if (workflowsPanel) workflowsPanel.hidden = false;
+      loadWorkflowsPanel();
+    }
+  }
+
+  tabs.forEach(tab => {
+    tab.addEventListener("click", () => showTab(tab.dataset.tab));
+  });
+
+  // Refresh buttons
+  const refreshApprovals = document.getElementById("refresh-approvals-btn");
+  if (refreshApprovals) refreshApprovals.addEventListener("click", loadOperatorPanel);
+  const refreshWorkflows = document.getElementById("refresh-workflows-btn");
+  if (refreshWorkflows) refreshWorkflows.addEventListener("click", loadWorkflowsPanel);
+}
+
+async function loadOperatorPanel() {
+  // Load health status
+  try {
+    const healthRes = await api("/v1/health");
+    if (healthRes.ok) {
+      const health = await healthRes.json();
+      const dbEl = document.getElementById("health-db");
+      const leaderEl = document.getElementById("health-leader");
+      const versionEl = document.getElementById("health-version");
+      if (dbEl) {
+        dbEl.textContent = health.database;
+        dbEl.className = "health-value " + (health.database === "ok" ? "ok" : "error");
+      }
+      if (leaderEl) {
+        const leaderId = health.scheduler_leader?.leader_id;
+        leaderEl.textContent = leaderId ? (leaderId.substring(0, 8) + "…") : "None";
+        leaderEl.className = "health-value " + (leaderId ? "ok" : "degraded");
+      }
+      if (versionEl) {
+        versionEl.textContent = health.app_version;
+        versionEl.className = "health-value";
+      }
+    }
+  } catch (e) { /* ignore */ }
+
+  // Load pending confirmations
+  try {
+    const confRes = await api("/v1/operator/pending-confirmations");
+    const container = document.getElementById("pending-confirmations-list");
+    if (container) {
+      if (confRes.ok) {
+        const data = await confRes.json();
+        const confirmations = data.confirmations || [];
+        if (confirmations.length === 0) {
+          container.innerHTML = '<p class="empty-state">No pending confirmations</p>';
+        } else {
+          container.innerHTML = confirmations.map(c => `
+            <div class="pending-card" data-id="${c.id}">
+              <div class="pending-card-header">
+                <span class="pending-card-action">${escHtml(c.action_type)}</span>
+                <span class="pending-card-risk risk-${c.risk_level}">${escHtml(c.risk_level)}</span>
+              </div>
+              <div class="pending-card-details">
+                Actor: ${escHtml(c.actor_id || "—")} · Expires: ${escHtml(c.expires_at || "—")}
+              </div>
+              <div class="pending-card-actions">
+                <button class="btn-approve" onclick="operatorApprove('${c.id}')">Approve</button>
+                <button class="btn-deny" onclick="operatorDeny('${c.id}')">Deny</button>
+              </div>
+            </div>
+          `).join("");
+        }
+      } else {
+        container.innerHTML = '<p class="empty-state">Access denied (admin role required)</p>';
+      }
+    }
+  } catch (e) { /* ignore */ }
+}
+
+async function loadWorkflowsPanel() {
+  try {
+    const res = await api("/v1/workflows/awaiting?limit=20");
+    const container = document.getElementById("awaiting-runs-list");
+    if (container) {
+      if (res.ok) {
+        const data = await res.json();
+        const runs = data.runs || [];
+        if (runs.length === 0) {
+          container.innerHTML = '<p class="empty-state">No runs awaiting attention</p>';
+        } else {
+          container.innerHTML = runs.map(r => `
+            <div class="run-card">
+              <div class="run-card-header">
+                <span class="run-card-name">${escHtml(r.workflow_name)}</span>
+                <span class="run-card-status status-${r.status}">${escHtml(r.status)}</span>
+              </div>
+              <div class="pending-card-details">
+                Run: ${escHtml(r.id?.substring(0, 8) || "—")}… · Step: ${r.current_step ?? "—"}
+              </div>
+            </div>
+          `).join("");
+        }
+      } else {
+        container.innerHTML = '<p class="empty-state">Could not load awaiting runs</p>';
+      }
+    }
+  } catch (e) { /* ignore */ }
+
+  try {
+    const res = await api("/v1/workflows/runs?limit=10");
+    const container = document.getElementById("recent-runs-list");
+    if (container) {
+      if (res.ok) {
+        const data = await res.json();
+        const runs = data.runs || [];
+        if (runs.length === 0) {
+          container.innerHTML = '<p class="empty-state">No recent runs</p>';
+        } else {
+          container.innerHTML = runs.map(r => `
+            <div class="run-card">
+              <div class="run-card-header">
+                <span class="run-card-name">${escHtml(r.workflow_name)}</span>
+                <span class="run-card-status status-${r.status}">${escHtml(r.status)}</span>
+              </div>
+              <div class="pending-card-details">
+                Run: ${escHtml(r.id?.substring(0, 8) || "—")}…
+              </div>
+            </div>
+          `).join("");
+        }
+      } else {
+        container.innerHTML = '<p class="empty-state">Could not load recent runs</p>';
+      }
+    }
+  } catch (e) { /* ignore */ }
+}
+
+async function operatorApprove(confirmationId) {
+  try {
+    const res = await api(`/v1/operator/confirmations/${confirmationId}/approve`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({}),
+    });
+    if (res.ok) {
+      loadOperatorPanel();
+    } else {
+      const err = await res.json().catch(() => ({}));
+      alert("Approve failed: " + (err.detail || res.statusText));
+    }
+  } catch (e) {
+    alert("Approve failed: " + e.message);
+  }
+}
+
+async function operatorDeny(confirmationId) {
+  try {
+    const res = await api(`/v1/operator/confirmations/${confirmationId}/deny`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({}),
+    });
+    if (res.ok) {
+      loadOperatorPanel();
+    } else {
+      const err = await res.json().catch(() => ({}));
+      alert("Deny failed: " + (err.detail || res.statusText));
+    }
+  } catch (e) {
+    alert("Deny failed: " + e.message);
+  }
+}
+
+function escHtml(s) {
+  if (!s) return "";
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
 function main() {
   wire();
   bootstrap();

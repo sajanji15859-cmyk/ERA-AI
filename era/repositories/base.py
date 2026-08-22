@@ -322,3 +322,30 @@ class WorkflowGovernanceRepo(Protocol):
         """
 
     def reset(self, session, kind: str, scope: str) -> None: ...
+
+
+class ConfirmationApprovalRepo(Protocol):
+    """Dual-approval storage (Phase 4E)."""
+
+    def create(self, session, approval) -> object: ...
+
+    def get_by_actor(self, session, confirmation_id: str,
+                     actor_id: str) -> object | None: ...
+
+    def list_for_confirmation(self, session,
+                              confirmation_id: str) -> list: ...
+
+    def count_granted(self, session, confirmation_id: str) -> int: ...
+
+
+class SchedulerLeaderRepo(Protocol):
+    """Scheduler leader election storage (Phase 4E).
+
+    Note: the leader service uses the ORM model directly via session.get() —
+    this protocol exists only for documentation / test double purposes.
+    """
+
+    def get(self, session, singleton_id: str = "singleton") -> object | None: ...
+
+    def upsert(self, session, *, leader_id: str,
+               heartbeat_at: str, version: int) -> object: ...

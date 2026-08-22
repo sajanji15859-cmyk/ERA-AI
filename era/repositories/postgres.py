@@ -19,6 +19,7 @@ from era.repositories.sqlite import (
     SQLiteAgentRunRepo,
     SQLiteApiKeyRepo,
     SQLiteAuditRepo,
+    SQLiteConfirmationApprovalRepo,
     SQLiteConfirmationRepo,
     SQLiteIdempotencyRepo,
     SQLiteJobRepo,
@@ -150,3 +151,7 @@ class PostgresCircuitBreakerStateRepo:
             .returning(CircuitBreakerStateRow)
         )
         return session.execute(statement).scalar_one()
+
+
+class PostgresConfirmationApprovalRepo(SQLiteConfirmationApprovalRepo):
+    """PostgreSQL dual-approval storage (Phase 4E)."""

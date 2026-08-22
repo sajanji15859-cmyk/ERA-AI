@@ -56,6 +56,8 @@ class Permission:
     WORKFLOW_REVIEW = "workflow.review"
     #: Phase 4D: read workflows / templates / aggregation. Owner scope for runs.
     WORKFLOW_READ = "workflow.read"
+    #: Phase 4E: operator review of pending confirmations (dual-approval).
+    OPERATOR_REVIEW = "operator.review"
 
 
 ALL_PERMISSIONS: frozenset[str] = frozenset({
@@ -77,6 +79,7 @@ ALL_PERMISSIONS: frozenset[str] = frozenset({
     Permission.WORKFLOW_TEMPLATES_MANAGE,
     Permission.WORKFLOW_REVIEW,
     Permission.WORKFLOW_READ,
+    Permission.OPERATOR_REVIEW,
 })
 
 ROLE_PERMISSIONS: dict[Role, frozenset[str]] = {

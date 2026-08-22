@@ -19,11 +19,13 @@ def test_migration_upgrade_downgrade_round_trip(tmp_path):
     with engine.connect() as connection:
         tables = set(inspect(connection).get_table_names())
         revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar()
-    assert revision == "0007_phase_4d_operations"
+    assert revision == "0008_phase_4e_production"
     assert "circuit_breaker_state" in tables
     assert "idempotency_record" in tables
     assert "job" in tables
     assert "schedule" in tables
+    assert "confirmation_approval" in tables
+    assert "scheduler_leader" in tables
     assert {"signature", "signing_key_id", "signing_algorithm"} <= _columns(
         engine, "audit_log"
     )
@@ -58,9 +60,11 @@ def test_pre_alembic_database_is_stamped_and_upgraded_without_data_loss(tmp_path
             "SELECT version FROM policy_version WHERE changed_by = 'legacy'"
         )).scalar()
         tables = set(inspect(connection).get_table_names())
-    assert revision == "0007_phase_4d_operations"
+    assert revision == "0008_phase_4e_production"
     assert version == 7
     assert "circuit_breaker_state" in tables
     assert "schedule" in tables
+    assert "confirmation_approval" in tables
+    assert "scheduler_leader" in tables
     assert "signature" in _columns(engine, "audit_log")
     engine.dispose()

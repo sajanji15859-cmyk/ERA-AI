@@ -29,11 +29,14 @@ from era.security.vault import parse_master_key
 from era.services.audit_service import AuditService
 from era.services.auth_service import AuthService
 from era.services.confirmation_service import ConfirmationService
+from era.services.confirmation_sweeper import ConfirmationSweeper
+from era.services.dual_approval import DualApprovalService
 from era.services.execution_service import ExecutionService
 from era.services.idempotency import IdempotencyService
 from era.services.jobs import JobService
 from era.services.permission_engine import PermissionEngine
 from era.services.policy import PolicyService
+from era.services.scheduler_leader import SchedulerLeaderService
 from era.services.schedules import ScheduleService
 from era.services.vault_service import VaultService
 from era.services.workflow_ops_service import (
@@ -77,6 +80,12 @@ class Container:
     workflow_schedule_service: WorkflowScheduleService
     workflow_template_service: WorkflowTemplateService
     workflow_governance_service: WorkflowGovernanceService
+    #: Phase 4E: dual-approval for FINANCIAL / BOOKING confirmations.
+    dual_approval_service: DualApprovalService
+    #: Phase 4E: DB-backed scheduler leader election.
+    scheduler_leader_service: SchedulerLeaderService
+    #: Phase 4E: confirmation expiry sweeper.
+    confirmation_sweeper: ConfirmationSweeper
     #: Phase 3A: agent run lifecycle. ``None`` unless the agent runtime wired
     #: it (``build_agent_container``) — the default container stays unchanged.
     agent_service: AgentService | None = None
@@ -240,6 +249,26 @@ def build_container(settings: Settings | None = None,
         settings=settings,
         workflow_schedule_service=workflow_schedule_service,
     )
+
+    # Phase 4E: dual-approval service for FINANCIAL/BOOKING confirmations.
+    dual_approval_service = DualApprovalService(
+        session_factory=session_factory,
+        approval_repo=repositories.confirmation_approval,
+        confirmation_repo=repositories.confirmation,
+    )
+    # Phase 4E: scheduler leader election for multi-worker coordination.
+    scheduler_leader_service = SchedulerLeaderService(
+        session_factory=session_factory,
+        heartbeat_timeout_seconds=float(
+            getattr(settings, "scheduler_heartbeat_timeout_seconds", 30.0)
+        ),
+    )
+    # Phase 4E: confirmation expiry sweeper.
+    confirmation_sweeper = ConfirmationSweeper(
+        session_factory=session_factory,
+        confirmation_repo=repositories.confirmation,
+    )
+
     if settings.scheduler_enabled:
         schedule_service.start(interval_seconds=settings.scheduler_interval_seconds)
 
@@ -270,4 +299,7 @@ def build_container(settings: Settings | None = None,
         workflow_schedule_service=workflow_schedule_service,
         workflow_template_service=workflow_template_service,
         workflow_governance_service=workflow_governance_service,
+        dual_approval_service=dual_approval_service,
+        scheduler_leader_service=scheduler_leader_service,
+        confirmation_sweeper=confirmation_sweeper,
     )

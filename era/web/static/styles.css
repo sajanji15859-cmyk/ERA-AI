@@ -482,3 +482,223 @@ code, pre {
 @media (max-width: 760px) {
   #sidebar-backdrop.show { display: block; }
 }
+
+/* ==========================================================================
+   Phase 4E — Operator review + workflows panels
+   ========================================================================== */
+
+.sidebar-nav {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border, #333);
+}
+
+.nav-tab {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary, #aaa);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.nav-tab:hover {
+  background: var(--bg-hover, #2a2a2a);
+  color: var(--text-primary, #fff);
+}
+
+.nav-tab.active {
+  background: var(--accent, #4a9eff);
+  color: #fff;
+  border-color: var(--accent, #4a9eff);
+}
+
+.operator-panel,
+.workflows-panel {
+  display: none;
+  padding: 16px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.operator-panel:not([hidden]),
+.workflows-panel:not([hidden]) {
+  display: block;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border, #333);
+}
+
+.panel-header h2 {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.panel-section {
+  margin-bottom: 20px;
+}
+
+.panel-section h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary, #aaa);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.pending-list,
+.recent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pending-card {
+  background: var(--bg-card, #1e1e1e);
+  border: 1px solid var(--border, #333);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.pending-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.pending-card-action {
+  font-family: monospace;
+  font-size: 13px;
+  color: var(--accent, #4a9eff);
+}
+
+.pending-card-risk {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.risk-financial { background: #ff4444; color: #fff; }
+.risk-booking { background: #ff8800; color: #fff; }
+.risk-destructive { background: #cc0000; color: #fff; }
+.risk-mutating { background: #666; color: #fff; }
+
+.pending-card-details {
+  font-size: 12px;
+  color: var(--text-secondary, #aaa);
+  margin-bottom: 8px;
+}
+
+.pending-card-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-approve {
+  background: #22c55e;
+  color: #fff;
+  border: none;
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.btn-deny {
+  background: #ef4444;
+  color: #fff;
+  border: none;
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.health-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.health-item {
+  background: var(--bg-card, #1e1e1e);
+  border: 1px solid var(--border, #333);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.health-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary, #aaa);
+}
+
+.health-value {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.health-value.ok { color: #22c55e; }
+.health-value.error { color: #ef4444; }
+.health-value.degraded { color: #ff8800; }
+
+.empty-state {
+  text-align: center;
+  padding: 20px;
+  color: var(--text-secondary, #aaa);
+  font-size: 13px;
+}
+
+.run-card {
+  background: var(--bg-card, #1e1e1e);
+  border: 1px solid var(--border, #333);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 8px;
+}
+
+.run-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.run-card-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.run-card-status {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.status-completed { background: #22c55e33; color: #22c55e; }
+.status-failed { background: #ef444433; color: #ef4444; }
+.status-waiting_for_user { background: #ff880033; color: #ff8800; }
+.status-ambiguous { background: #ff880033; color: #ff8800; }
+.status-running { background: #4a9eff33; color: #4a9eff; }
+.status-pending { background: #66666633; color: #aaa; }

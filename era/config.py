@@ -194,6 +194,10 @@ class Settings(BaseSettings):
     # --- Phase 3H: scheduled jobs + providers (WhatsApp, Image, Booking) ----
     scheduler_enabled: bool = False
     scheduler_interval_seconds: float = 1.0
+    #: Phase 4E: heartbeat timeout for scheduler leader election (seconds).
+    scheduler_heartbeat_timeout_seconds: float = 30.0
+    #: Phase 4E: how often the confirmation expiry sweeper runs (seconds). 0 disables.
+    confirmation_sweeper_interval_seconds: float = 60.0
 
     #: WhatsApp Provider (Meta Cloud API / Twilio)
     whatsapp_api_url: str = "https://graph.facebook.com/v20.0"

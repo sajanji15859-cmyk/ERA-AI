@@ -11,6 +11,7 @@ from era.repositories.base import (
     ApiKeyRepo,
     AuditRepo,
     CircuitBreakerStateRepo,
+    ConfirmationApprovalRepo,
     ConfirmationRepo,
     IdempotencyRepo,
     JobRepo,
@@ -33,6 +34,7 @@ class RepositoryBundle:
 
     audit: AuditRepo
     confirmation: ConfirmationRepo
+    confirmation_approval: ConfirmationApprovalRepo
     policy: PolicyRepo
     user: UserRepo
     api_key: ApiKeyRepo
@@ -64,6 +66,7 @@ def build_repositories(
             SQLiteApiKeyRepo,
             SQLiteAuditRepo,
             SQLiteCircuitBreakerStateRepo,
+            SQLiteConfirmationApprovalRepo,
             SQLiteConfirmationRepo,
             SQLiteIdempotencyRepo,
             SQLiteJobRepo,
@@ -81,6 +84,7 @@ def build_repositories(
         return RepositoryBundle(
             audit=SQLiteAuditRepo(genesis_hash, signer=signer),
             confirmation=SQLiteConfirmationRepo(),
+            confirmation_approval=SQLiteConfirmationApprovalRepo(),
             policy=SQLitePolicyRepo(),
             user=SQLiteUserRepo(),
             api_key=SQLiteApiKeyRepo(),
@@ -103,6 +107,7 @@ def build_repositories(
             PostgresApiKeyRepo,
             PostgresAuditRepo,
             PostgresCircuitBreakerStateRepo,
+            PostgresConfirmationApprovalRepo,
             PostgresConfirmationRepo,
             PostgresIdempotencyRepo,
             PostgresJobRepo,
@@ -120,6 +125,7 @@ def build_repositories(
         return RepositoryBundle(
             audit=PostgresAuditRepo(genesis_hash, signer=signer),
             confirmation=PostgresConfirmationRepo(),
+            confirmation_approval=PostgresConfirmationApprovalRepo(),
             policy=PostgresPolicyRepo(),
             user=PostgresUserRepo(),
             api_key=PostgresApiKeyRepo(),
