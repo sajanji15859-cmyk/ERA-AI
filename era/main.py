@@ -15,7 +15,18 @@ from fastapi.staticfiles import StaticFiles
 
 from era.api.middleware import BodySizeLimitMiddleware, SecurityHeadersMiddleware
 from era.api.rate_limit import RateLimitMiddleware
-from era.api.routes import actions, admin, audit, confirmations, jobs, policy, providers, ui, vault
+from era.api.routes import (
+    actions,
+    admin,
+    audit,
+    confirmations,
+    jobs,
+    policy,
+    providers,
+    schedules,
+    ui,
+    vault,
+)
 from era.config import Settings
 from era.container import build_container
 
@@ -27,17 +38,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if settings.agent_enabled:
         from era.agent_runtime import build_agent_container
         container = build_agent_container(settings)
-        title = "ERA AI — Agent (Phase 3G)"
+        title = "ERA AI — Agent (Phase 3H)"
     else:
         container = build_container(settings)
-        title = "ERA AI — Phase 3G"
+        title = "ERA AI — Phase 3H"
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         yield
-        # Phase 3G: stop the background worker pool on clean shutdown.
+        # Phase 3G & 3H: stop background workers on clean shutdown.
         if container.job_service is not None:
             container.job_service.shutdown()
+        if container.schedule_service is not None:
+            container.schedule_service.shutdown()
 
     app = FastAPI(title=title, version=settings.app_version, lifespan=lifespan)
     app.state.container = container
@@ -65,6 +78,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(admin.router)
     app.include_router(vault.router)
     app.include_router(jobs.router)
+    app.include_router(schedules.router)
     if settings.agent_enabled:
         from era.api.routes import agent
         app.include_router(agent.router)

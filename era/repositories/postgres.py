@@ -24,6 +24,7 @@ from era.repositories.sqlite import (
     SQLiteJobRepo,
     SQLiteMemoryRepo,
     SQLitePolicyRepo,
+    SQLiteScheduleRepo,
     SQLiteUserRepo,
     SQLiteVaultRepo,
 )
@@ -91,6 +92,10 @@ class PostgresIdempotencyRepo(SQLiteIdempotencyRepo):
 
 class PostgresJobRepo(SQLiteJobRepo):
     """PostgreSQL background job storage (Phase 3G)."""
+
+
+class PostgresScheduleRepo(SQLiteScheduleRepo):
+    """PostgreSQL schedule repository (Phase 3H)."""
 
 
 class PostgresCircuitBreakerStateRepo:

@@ -20,183 +20,10 @@ from typing import Any
 
 from era.core.enums import RiskLevel
 from era.core.tool_registry import ActionCatalog, ToolRegistry
+from era.registry.actions import ACTION_PARAM_SCHEMAS
 
-#: Parameter shapes for the tools with real providers in this phase.
-#: ``required`` lists the parameters a call must include.
-TOOL_PARAM_SCHEMAS: dict[str, dict[str, Any]] = {
-    "web.search": {
-        "type": "object",
-        "properties": {"q": {"type": "string", "description": "search query"}},
-        "required": ["q"],
-    },
-    "web.fetch": {
-        "type": "object",
-        "properties": {"url": {"type": "string", "description": "public http(s) URL"}},
-        "required": ["url"],
-    },
-    "web.download": {
-        "type": "object",
-        "properties": {
-            "url": {"type": "string"},
-            "path": {"type": "string", "description": "workspace-relative file path"},
-        },
-        "required": ["url", "path"],
-    },
-    "fs.list": {
-        "type": "object",
-        "properties": {"path": {"type": "string", "description": "workspace directory"}},
-        "required": ["path"],
-    },
-    "fs.read": {
-        "type": "object",
-        "properties": {"path": {"type": "string", "description": "workspace file"}},
-        "required": ["path"],
-    },
-    "fs.write": {
-        "type": "object",
-        "properties": {
-            "path": {"type": "string"},
-            "content": {"type": "string", "description": "full file content"},
-        },
-        "required": ["path", "content"],
-    },
-    "fs.move": {
-        "type": "object",
-        "properties": {"path": {"type": "string"}, "dst": {"type": "string"}},
-        "required": ["path", "dst"],
-    },
-    "fs.delete": {
-        "type": "object",
-        "properties": {"path": {"type": "string", "description": "file/empty dir"}},
-        "required": ["path"],
-    },
-}
-TOOL_PARAM_SCHEMAS.update({
-    "photo.view": {
-        "type": "object",
-        "properties": {"path": {"type": "string"}},
-        "required": ["path"],
-    },
-    "photo.edit": {
-        "type": "object",
-        "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
-        "required": ["path", "content"],
-    },
-    "photo.upload": {
-        "type": "object",
-        "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
-        "required": ["path", "content"],
-    },
-    "photo.delete": {
-        "type": "object",
-        "properties": {"path": {"type": "string"}},
-        "required": ["path"],
-    },
-    # Phase 3D: GitHub
-    "github.repo_get": {
-        "type": "object",
-        "properties": {"repo": {"type": "string", "description": "owner/repo"}},
-        "required": ["repo"],
-    },
-    "github.issue_list": {
-        "type": "object",
-        "properties": {
-            "repo": {"type": "string", "description": "owner/repo"},
-            "state": {"type": "string", "description": "open|closed|all"},
-        },
-        "required": ["repo"],
-    },
-    "github.issue_get": {
-        "type": "object",
-        "properties": {
-            "repo": {"type": "string", "description": "owner/repo"},
-            "issue_number": {"type": "integer", "description": "issue number"},
-        },
-        "required": ["repo", "issue_number"],
-    },
-    "github.issue_create": {
-        "type": "object",
-        "properties": {
-            "repo": {"type": "string", "description": "owner/repo"},
-            "title": {"type": "string", "description": "issue title"},
-            "body": {"type": "string", "description": "issue body"},
-        },
-        "required": ["repo", "title"],
-    },
-    "github.issue_comment": {
-        "type": "object",
-        "properties": {
-            "repo": {"type": "string", "description": "owner/repo"},
-            "issue_number": {"type": "integer", "description": "issue number"},
-            "body": {"type": "string", "description": "comment body"},
-        },
-        "required": ["repo", "issue_number", "body"],
-    },
-    "github.pr_list": {
-        "type": "object",
-        "properties": {
-            "repo": {"type": "string", "description": "owner/repo"},
-            "state": {"type": "string", "description": "open|closed|all"},
-        },
-        "required": ["repo"],
-    },
-    "github.pr_get": {
-        "type": "object",
-        "properties": {
-            "repo": {"type": "string", "description": "owner/repo"},
-            "pull_number": {"type": "integer", "description": "PR number"},
-        },
-        "required": ["repo", "pull_number"],
-    },
-    "github.pr_create": {
-        "type": "object",
-        "properties": {
-            "repo": {"type": "string", "description": "owner/repo"},
-            "title": {"type": "string", "description": "PR title"},
-            "head": {"type": "string", "description": "head branch"},
-            "base": {"type": "string", "description": "base branch"},
-            "body": {"type": "string", "description": "PR description"},
-        },
-        "required": ["repo", "title", "head", "base"],
-    },
-    "github.file_get": {
-        "type": "object",
-        "properties": {
-            "repo": {"type": "string", "description": "owner/repo"},
-            "path": {"type": "string", "description": "file path in repo"},
-            "ref": {"type": "string", "description": "branch, tag or commit SHA"},
-        },
-        "required": ["repo", "path"],
-    },
-    "github.file_commit": {
-        "type": "object",
-        "properties": {
-            "repo": {"type": "string", "description": "owner/repo"},
-            "path": {"type": "string", "description": "file path in repo"},
-            "message": {"type": "string", "description": "commit message"},
-            "content": {"type": "string", "description": "file content to commit"},
-            "branch": {"type": "string", "description": "target branch"},
-        },
-        "required": ["repo", "path", "message", "content"],
-    },
-    # Phase 3D: Code execution
-    "code.run": {
-        "type": "object",
-        "properties": {
-            "code": {"type": "string", "description": "Python code snippet to execute"},
-            "language": {"type": "string", "description": "python"},
-        },
-        "required": ["code"],
-    },
-    "code.exec": {
-        "type": "object",
-        "properties": {
-            "code": {"type": "string", "description": "Python code snippet to execute"},
-            "language": {"type": "string", "description": "python"},
-        },
-        "required": ["code"],
-    },
-})
+#: Parameter shapes for catalogued tools (Phase 3H: alias to authoritative ACTION_PARAM_SCHEMAS).
+TOOL_PARAM_SCHEMAS: dict[str, dict[str, Any]] = ACTION_PARAM_SCHEMAS
 
 TOOL_DESCRIPTIONS: dict[str, str] = {
     "web.search": "Search the public web (keyless). Returns titles, URLs and snippets.",
@@ -211,6 +38,18 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "photo.edit": "Overwrite an image asset in the workspace (approval-gated).",
     "photo.upload": "Write a new image asset into the workspace (approval-gated).",
     "photo.delete": "Delete an image asset. REQUIRES strong approval.",
+    "email.read": "Read an email message by message_id.",
+    "email.search": "Search emails by query.",
+    "email.draft": "Create a draft email.",
+    "email.send": "Send an email message via SMTP (approval-gated).",
+    "whatsapp.read": "Read recent incoming WhatsApp messages.",
+    "whatsapp.send": "Send a WhatsApp message (approval-gated).",
+    "whatsapp.react": "React to a WhatsApp message with an emoji (approval-gated).",
+    "booking.search": "Search trains or flights across routes and dates.",
+    "booking.hold": "Create a temporary travel booking draft (approval-gated).",
+    "booking.confirm": "Confirm and issue a travel reservation. REQUIRES strong approval.",
+    "booking.cancel": "Cancel an existing travel reservation. REQUIRES strong approval.",
+    "image.generate": "Generate an image from a prompt into the workspace (approval-gated).",
     "github.repo_get": "Get metadata for a GitHub repository (stars, forks, description).",
     "github.issue_list": "List issues in a GitHub repository.",
     "github.issue_get": "Get details of a specific GitHub issue.",

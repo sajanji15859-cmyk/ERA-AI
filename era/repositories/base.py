@@ -21,6 +21,7 @@ from era.models import (
     MemoryEntry,
     PendingConfirmation,
     PolicyVersion,
+    Schedule,
     User,
     VaultSecret,
 )
@@ -199,3 +200,19 @@ class JobRepo(Protocol):
     def list_by_actor(self, session, actor_id: str, *, limit: int = 50) -> list[Job]: ...
 
     def list_by_statuses(self, session, statuses: list[str]) -> list[Job]: ...
+
+
+class ScheduleRepo(Protocol):
+    """Scheduled/recurring job storage (Phase 3H)."""
+
+    def create(self, session, schedule: Schedule) -> Schedule: ...
+
+    def get(self, session, schedule_id: str) -> Schedule | None: ...
+
+    def update(self, session, schedule: Schedule) -> Schedule: ...
+
+    def delete(self, session, schedule: Schedule) -> bool: ...
+
+    def list_by_actor(self, session, actor_id: str, *, limit: int = 50) -> list[Schedule]: ...
+
+    def list_due(self, session, now_iso: str, *, limit: int = 100) -> list[Schedule]: ...

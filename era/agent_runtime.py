@@ -20,11 +20,14 @@ from era.agents.verifier import Verifier
 from era.config import Settings
 from era.container import Container, build_container
 from era.providers import StubProvider
+from era.providers.booking import BookingProvider
 from era.providers.code_exec import CodeExecProvider
 from era.providers.email_smtp import EmailSmtpProvider
 from era.providers.github import GitHubProvider
+from era.providers.image_gen import ImageGenProvider
 from era.providers.llm_openai import OpenAICompatLLMProvider
 from era.providers.web import WebProvider
+from era.providers.whatsapp import WhatsAppProvider
 from era.providers.workspace import WorkspaceProvider
 from era.security.vault import VaultError, is_vault_ref
 from era.services.agent_service import AgentService
@@ -121,6 +124,45 @@ def build_code_exec_provider(settings: Settings, workspace_root: Path):
     )
 
 
+def build_whatsapp_provider(settings: Settings, vault_resolver: VaultRefResolver):
+    """Build the Meta Cloud API WhatsApp provider (Phase 3H)."""
+    if not (settings.whatsapp_phone_number_id or settings.whatsapp_access_token):
+        return None
+    return WhatsAppProvider(
+        phone_number_id=settings.whatsapp_phone_number_id,
+        access_token=settings.whatsapp_access_token,
+        api_url=settings.whatsapp_api_url,
+        timeout_seconds=float(settings.whatsapp_timeout_seconds),
+        secret_resolver=vault_resolver,
+    )
+
+
+def build_image_gen_provider(settings: Settings, workspace_root: Path, vault_resolver: VaultRefResolver):
+    """Build the Image Generation provider (Phase 3H)."""
+    if not settings.image_gen_api_key:
+        return None
+    return ImageGenProvider(
+        api_key=settings.image_gen_api_key,
+        base_url=settings.image_gen_base_url,
+        model=settings.image_gen_model,
+        workspace_root=workspace_root,
+        timeout_seconds=float(settings.image_gen_timeout_seconds),
+        secret_resolver=vault_resolver,
+    )
+
+
+def build_booking_provider(settings: Settings, vault_resolver: VaultRefResolver):
+    """Build the Travel Booking provider (Phase 3H)."""
+    if not (settings.booking_partner_api_key or settings.booking_partner_url):
+        return None
+    return BookingProvider(
+        partner_api_key=settings.booking_partner_api_key,
+        partner_url=settings.booking_partner_url,
+        timeout_seconds=float(settings.booking_timeout_seconds),
+        secret_resolver=vault_resolver,
+    )
+
+
 def build_agent_container(settings: Settings | None = None) -> Container:
     """Build a container wired for the ERA agent (real providers + AgentService)."""
     settings = settings or Settings()
@@ -133,11 +175,14 @@ def build_agent_container(settings: Settings | None = None) -> Container:
                       user_agent=settings.web_user_agent,
                       workspace_root=workspace_root)
 
-    # Phase 3C & 3D: provider secrets and real providers.
+    # Phase 3C, 3D & 3H: provider secrets and real providers.
     vault_resolver = VaultRefResolver()
     email = build_email_provider(settings, vault_resolver)
     github = build_github_provider(settings, vault_resolver)
     code_exec = build_code_exec_provider(settings, workspace_root)
+    whatsapp = build_whatsapp_provider(settings, vault_resolver)
+    image_gen = build_image_gen_provider(settings, workspace_root, vault_resolver)
+    booking = build_booking_provider(settings, vault_resolver)
 
     providers = [workspace, web]
     claimed = workspace.action_types | web.action_types
@@ -150,6 +195,15 @@ def build_agent_container(settings: Settings | None = None) -> Container:
     if code_exec is not None:
         providers.append(code_exec)
         claimed |= code_exec.action_types
+    if whatsapp is not None:
+        providers.append(whatsapp)
+        claimed |= whatsapp.action_types
+    if image_gen is not None:
+        providers.append(image_gen)
+        claimed |= image_gen.action_types
+    if booking is not None:
+        providers.append(booking)
+        claimed |= booking.action_types
     providers.append(StubProvider(exclude=claimed))
 
     container = build_container(settings, providers=providers)

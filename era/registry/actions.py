@@ -19,6 +19,7 @@ Notable security decisions encoded here:
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Any
 
 from era.core.enums import RiskLevel
 from era.core.tool_registry import ActionCatalog, ActionSpec
@@ -93,9 +94,514 @@ class ActionType(StrEnum):
     CODE_RUN = "code.run"
     CODE_EXEC = "code.exec"
 
+    # --- image generation (Phase 3H) ------------------------------------------
+    IMAGE_GENERATE = "image.generate"
+
     # --- forbidden -----------------------------------------------------------
     SECRET_EXPORT = "secret.export"
     ACCOUNT_DELETE = "account.delete"
+
+
+#: Authoritative parameter schemas (Phase 3H: consolidated single source of truth).
+ACTION_PARAM_SCHEMAS: dict[str, dict[str, Any]] = {
+    # stub / core
+    ActionType.STUB_NOOP.value: {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": True,
+    },
+    # web
+    ActionType.WEB_SEARCH.value: {
+        "type": "object",
+        "properties": {
+            "q": {"type": "string", "description": "search query"},
+            "query": {"type": "string"},
+            "filters": {"type": "object"},
+            "api_key": {"type": "string"},
+            "limit": {"type": "integer"},
+        },
+        "required": ["q"],
+    },
+    ActionType.WEB_FETCH.value: {
+        "type": "object",
+        "properties": {
+            "url": {"type": "string", "description": "public http(s) URL"},
+            "api_key": {"type": "string"},
+        },
+        "required": ["url"],
+    },
+    ActionType.WEB_DOWNLOAD.value: {
+        "type": "object",
+        "properties": {
+            "url": {"type": "string"},
+            "path": {"type": "string", "description": "workspace-relative file path"},
+            "api_key": {"type": "string"},
+        },
+        "required": ["url", "path"],
+    },
+    # email
+    ActionType.EMAIL_READ.value: {
+        "type": "object",
+        "properties": {
+            "message_id": {"type": "string"},
+            "limit": {"type": "integer"},
+            "token": {"type": "string"},
+            "refresh_token": {"type": "string"},
+        },
+        "required": [],
+    },
+    ActionType.EMAIL_SEARCH.value: {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+            "q": {"type": "string"},
+            "limit": {"type": "integer"},
+            "token": {"type": "string"},
+            "refresh_token": {"type": "string"},
+        },
+        "required": ["query"],
+    },
+    ActionType.EMAIL_DRAFT.value: {
+        "type": "object",
+        "properties": {
+            "to": {"type": "string"},
+            "subject": {"type": "string"},
+            "body": {"type": "string"},
+            "token": {"type": "string"},
+            "refresh_token": {"type": "string"},
+        },
+        "required": ["to", "body"],
+    },
+    ActionType.EMAIL_SEND.value: {
+        "type": "object",
+        "properties": {
+            "to": {"type": "string"},
+            "subject": {"type": "string"},
+            "body": {"type": "string"},
+            "cc": {"type": "string"},
+            "bcc": {"type": "string"},
+            "token": {"type": "string"},
+            "refresh_token": {"type": "string"},
+        },
+        "required": ["to"],
+    },
+    # whatsapp
+    ActionType.WHATSAPP_READ.value: {
+        "type": "object",
+        "properties": {
+            "limit": {"type": "integer"},
+            "sender": {"type": "string"},
+            "token": {"type": "string"},
+        },
+        "required": [],
+    },
+    ActionType.WHATSAPP_SEND.value: {
+        "type": "object",
+        "properties": {
+            "to": {"type": "string", "description": "recipient phone number (E.164)"},
+            "message": {"type": "string", "description": "text body"},
+            "text": {"type": "string"},
+            "template": {"type": "string", "description": "template name"},
+            "template_params": {"type": "object"},
+            "token": {"type": "string"},
+        },
+        "required": ["to"],
+    },
+    ActionType.WHATSAPP_REACT.value: {
+        "type": "object",
+        "properties": {
+            "message_id": {"type": "string"},
+            "emoji": {"type": "string"},
+            "to": {"type": "string"},
+            "token": {"type": "string"},
+        },
+        "required": ["message_id", "emoji"],
+    },
+    # booking
+    ActionType.BOOKING_SEARCH.value: {
+        "type": "object",
+        "properties": {
+            "origin": {"type": "string"},
+            "destination": {"type": "string"},
+            "date": {"type": "string"},
+            "departure_date": {"type": "string"},
+            "mode": {"type": "string"},
+            "token": {"type": "string"},
+            "payment_token": {"type": "string"},
+        },
+        "required": ["origin", "destination"],
+    },
+    ActionType.BOOKING_HOLD.value: {
+        "type": "object",
+        "properties": {
+            "booking_id": {"type": "string"},
+            "trip_id": {"type": "string"},
+            "passenger_name": {"type": "string"},
+            "passengers": {"type": "array"},
+            "fare": {"type": "number"},
+            "service_number": {"type": "string"},
+            "token": {"type": "string"},
+            "payment_token": {"type": "string"},
+        },
+        "required": [],
+    },
+    ActionType.BOOKING_CONFIRM.value: {
+        "type": "object",
+        "properties": {
+            "booking_id": {"type": "string"},
+            "draft_id": {"type": "string"},
+            "token": {"type": "string"},
+            "payment_token": {"type": "string"},
+        },
+        "required": [],
+    },
+    ActionType.BOOKING_CANCEL.value: {
+        "type": "object",
+        "properties": {
+            "booking_id": {"type": "string"},
+            "reason": {"type": "string"},
+            "token": {"type": "string"},
+            "payment_token": {"type": "string"},
+        },
+        "required": ["booking_id"],
+    },
+    # fs / photo
+    ActionType.FS_LIST.value: {
+        "type": "object",
+        "properties": {"path": {"type": "string", "description": "workspace directory"}},
+        "required": ["path"],
+    },
+    ActionType.FS_READ.value: {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "description": "workspace file"},
+            "token": {"type": "string"},
+        },
+        "required": ["path"],
+    },
+    ActionType.FS_WRITE.value: {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string"},
+            "content": {"type": "string", "description": "full file content"},
+            "content_from": {"type": "string"},
+            "repair": {"type": "boolean"},
+            "token": {"type": "string"},
+        },
+        "required": ["path", "content"],
+    },
+    ActionType.FS_MOVE.value: {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string"},
+            "dst": {"type": "string"},
+            "token": {"type": "string"},
+        },
+        "required": ["path", "dst"],
+    },
+    ActionType.FS_DELETE.value: {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "description": "file/empty dir"},
+            "token": {"type": "string"},
+        },
+        "required": ["path"],
+    },
+    ActionType.PHOTO_VIEW.value: {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string"},
+            "token": {"type": "string"},
+        },
+        "required": ["path"],
+    },
+    ActionType.PHOTO_EDIT.value: {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string"},
+            "content": {"type": "string"},
+            "token": {"type": "string"},
+        },
+        "required": ["path", "content"],
+    },
+    ActionType.PHOTO_UPLOAD.value: {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string"},
+            "content": {"type": "string"},
+            "token": {"type": "string"},
+        },
+        "required": ["path", "content"],
+    },
+    ActionType.PHOTO_DELETE.value: {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string"},
+            "token": {"type": "string"},
+        },
+        "required": ["path"],
+    },
+    # device
+    ActionType.DEVICE_SHELL.value: {
+        "type": "object",
+        "properties": {
+            "command": {"type": "string"},
+            "pairing_token": {"type": "string"},
+        },
+        "required": ["command"],
+    },
+    ActionType.DEVICE_APP_LAUNCH.value: {
+        "type": "object",
+        "properties": {
+            "package": {"type": "string"},
+            "pairing_token": {"type": "string"},
+        },
+        "required": ["package"],
+    },
+    ActionType.DEVICE_UI_CLICK.value: {
+        "type": "object",
+        "properties": {
+            "x": {"type": "integer"},
+            "y": {"type": "integer"},
+            "selector": {"type": "string"},
+            "pairing_token": {"type": "string"},
+        },
+        "required": [],
+    },
+    ActionType.DEVICE_SCREENSHOT.value: {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string"},
+            "pairing_token": {"type": "string"},
+        },
+        "required": [],
+    },
+    ActionType.DEVICE_PHOTO_CAPTURE.value: {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string"},
+            "pairing_token": {"type": "string"},
+        },
+        "required": [],
+    },
+    ActionType.DEVICE_LOCATION.value: {
+        "type": "object",
+        "properties": {
+            "pairing_token": {"type": "string"},
+        },
+        "required": [],
+    },
+    ActionType.DEVICE_NOTIFICATION.value: {
+        "type": "object",
+        "properties": {
+            "title": {"type": "string"},
+            "body": {"type": "string"},
+            "pairing_token": {"type": "string"},
+        },
+        "required": ["title", "body"],
+    },
+    ActionType.DEVICE_CONTACTS.value: {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+            "pairing_token": {"type": "string"},
+        },
+        "required": [],
+    },
+    ActionType.DEVICE_SMS_READ.value: {
+        "type": "object",
+        "properties": {
+            "sender": {"type": "string"},
+            "limit": {"type": "integer"},
+            "pairing_token": {"type": "string"},
+        },
+        "required": [],
+    },
+    ActionType.DEVICE_SMS_SEND.value: {
+        "type": "object",
+        "properties": {
+            "to": {"type": "string"},
+            "message": {"type": "string"},
+            "pairing_token": {"type": "string"},
+        },
+        "required": ["to", "message"],
+    },
+    ActionType.DEVICE_INSTALL_APP.value: {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string"},
+            "url": {"type": "string"},
+            "pairing_token": {"type": "string"},
+        },
+        "required": [],
+    },
+    ActionType.DEVICE_UNINSTALL_APP.value: {
+        "type": "object",
+        "properties": {
+            "package": {"type": "string"},
+            "pairing_token": {"type": "string"},
+        },
+        "required": ["package"],
+    },
+    ActionType.DEVICE_SETTINGS_CHANGE.value: {
+        "type": "object",
+        "properties": {
+            "setting": {"type": "string"},
+            "value": {"type": "string"},
+            "pairing_token": {"type": "string"},
+        },
+        "required": ["setting", "value"],
+    },
+    ActionType.DEVICE_PAYMENT.value: {
+        "type": "object",
+        "properties": {
+            "amount": {"type": "number"},
+            "recipient": {"type": "string"},
+            "currency": {"type": "string"},
+            "pairing_token": {"type": "string"},
+        },
+        "required": ["amount", "recipient"],
+    },
+    # github
+    ActionType.GITHUB_REPO_GET.value: {
+        "type": "object",
+        "properties": {
+            "repo": {"type": "string", "description": "owner/repo"},
+            "token": {"type": "string"},
+        },
+        "required": ["repo"],
+    },
+    ActionType.GITHUB_ISSUE_LIST.value: {
+        "type": "object",
+        "properties": {
+            "repo": {"type": "string", "description": "owner/repo"},
+            "state": {"type": "string", "description": "open|closed|all"},
+            "token": {"type": "string"},
+        },
+        "required": ["repo"],
+    },
+    ActionType.GITHUB_ISSUE_GET.value: {
+        "type": "object",
+        "properties": {
+            "repo": {"type": "string", "description": "owner/repo"},
+            "issue_number": {"type": "integer", "description": "issue number"},
+            "token": {"type": "string"},
+        },
+        "required": ["repo", "issue_number"],
+    },
+    ActionType.GITHUB_ISSUE_CREATE.value: {
+        "type": "object",
+        "properties": {
+            "repo": {"type": "string", "description": "owner/repo"},
+            "title": {"type": "string", "description": "issue title"},
+            "body": {"type": "string", "description": "issue body"},
+            "token": {"type": "string"},
+        },
+        "required": ["repo", "title"],
+    },
+    ActionType.GITHUB_ISSUE_COMMENT.value: {
+        "type": "object",
+        "properties": {
+            "repo": {"type": "string", "description": "owner/repo"},
+            "issue_number": {"type": "integer", "description": "issue number"},
+            "body": {"type": "string", "description": "comment body"},
+            "token": {"type": "string"},
+        },
+        "required": ["repo", "issue_number", "body"],
+    },
+    ActionType.GITHUB_PR_LIST.value: {
+        "type": "object",
+        "properties": {
+            "repo": {"type": "string", "description": "owner/repo"},
+            "state": {"type": "string", "description": "open|closed|all"},
+            "token": {"type": "string"},
+        },
+        "required": ["repo"],
+    },
+    ActionType.GITHUB_PR_GET.value: {
+        "type": "object",
+        "properties": {
+            "repo": {"type": "string", "description": "owner/repo"},
+            "pull_number": {"type": "integer", "description": "PR number"},
+            "token": {"type": "string"},
+        },
+        "required": ["repo", "pull_number"],
+    },
+    ActionType.GITHUB_PR_CREATE.value: {
+        "type": "object",
+        "properties": {
+            "repo": {"type": "string", "description": "owner/repo"},
+            "title": {"type": "string", "description": "PR title"},
+            "head": {"type": "string", "description": "head branch"},
+            "base": {"type": "string", "description": "base branch"},
+            "body": {"type": "string", "description": "PR description"},
+            "token": {"type": "string"},
+        },
+        "required": ["repo", "title", "head", "base"],
+    },
+    ActionType.GITHUB_FILE_GET.value: {
+        "type": "object",
+        "properties": {
+            "repo": {"type": "string", "description": "owner/repo"},
+            "path": {"type": "string", "description": "file path in repo"},
+            "ref": {"type": "string", "description": "branch, tag or commit SHA"},
+            "token": {"type": "string"},
+        },
+        "required": ["repo", "path"],
+    },
+    ActionType.GITHUB_FILE_COMMIT.value: {
+        "type": "object",
+        "properties": {
+            "repo": {"type": "string", "description": "owner/repo"},
+            "path": {"type": "string", "description": "file path in repo"},
+            "message": {"type": "string", "description": "commit message"},
+            "content": {"type": "string", "description": "file content to commit"},
+            "branch": {"type": "string", "description": "target branch"},
+            "token": {"type": "string"},
+        },
+        "required": ["repo", "path", "message", "content"],
+    },
+    # code execution
+    ActionType.CODE_RUN.value: {
+        "type": "object",
+        "properties": {
+            "code": {"type": "string", "description": "Python code snippet to execute"},
+            "language": {"type": "string", "description": "python"},
+        },
+        "required": ["code"],
+    },
+    ActionType.CODE_EXEC.value: {
+        "type": "object",
+        "properties": {
+            "code": {"type": "string", "description": "Python code snippet to execute"},
+            "language": {"type": "string", "description": "python"},
+        },
+        "required": ["code"],
+    },
+    # image generation (Phase 3H)
+    ActionType.IMAGE_GENERATE.value: {
+        "type": "object",
+        "properties": {
+            "prompt": {"type": "string", "description": "image description prompt"},
+            "size": {"type": "string", "description": "e.g. 1024x1024"},
+            "output_path": {"type": "string", "description": "workspace output file path"},
+            "model": {"type": "string", "description": "model identifier"},
+            "api_key": {"type": "string"},
+        },
+        "required": ["prompt"],
+    },
+    # forbidden
+    ActionType.SECRET_EXPORT.value: {
+        "type": "object",
+        "properties": {},
+        "required": [],
+    },
+    ActionType.ACCOUNT_DELETE.value: {
+        "type": "object",
+        "properties": {},
+        "required": [],
+    },
+}
 
 
 def _spec(action_type: ActionType, risk: RiskLevel, domain: str,
@@ -105,6 +611,7 @@ def _spec(action_type: ActionType, risk: RiskLevel, domain: str,
         risk_level=risk,
         capability_domain=domain,
         secret_fields=frozenset(secret_fields),
+        param_schema=ACTION_PARAM_SCHEMAS.get(action_type.value),
     )
 
 
@@ -177,6 +684,9 @@ _SPECS: list[ActionSpec] = [
     # code execution (Phase 3D)
     _spec(ActionType.CODE_RUN, RiskLevel.MUTATING, "code"),
     _spec(ActionType.CODE_EXEC, RiskLevel.MUTATING, "code"),
+
+    # image generation (Phase 3H)
+    _spec(ActionType.IMAGE_GENERATE, RiskLevel.MUTATING, "image", ("api_key",)),
 
     # forbidden
     _spec(ActionType.SECRET_EXPORT, RiskLevel.FORBIDDEN, "core"),

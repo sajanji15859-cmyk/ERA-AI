@@ -68,7 +68,7 @@ The Phase 1C–1F work built a **provider-agnostic security and execution founda
 2. **No credential store.** The secure boundary (opaque `credential_ref`s, providers own secrets) is designed well, but with no vault there is nowhere for a real provider's API keys/OAuth tokens to live or be resolved.
 3. **`StubProvider` claims every action type.** Because `ToolRegistry.register` rejects duplicate `action_type`s, a real provider cannot take over an action type until `StubProvider` is withdrawn from it. Worse, today a real-ish action *silently* returns stub success. Registration needs an allowlist/ownership policy.
 4. **No real agent loop.** Only a structural interface + one 2-line test agent. No multi-turn orchestration, tool-result feedback, loop termination, or model wiring.
-5. **`param_schema` declared but unused** — no shared input validation/size caps before dispatch (relies entirely on each provider's `validate`).
+5. ~~**`param_schema` declared but unused**~~ — resolved in Phase 3H (consolidated authoritative `ACTION_PARAM_SCHEMAS`, fail-closed validation enforced before provider dispatch in ExecutionService).
 6. **`web.fetch`/`web.download` have a recognized SSRF surface with no guard implemented** (no URL scheme/private-range/DNS-rebinding protection).
 7. **File/photo & device paths are arbitrary** — no path sandboxing / traversal guard for `fs.*` / `photo.*`.
 8. **Confirmation approval is not bound to the requesting actor/session** — anyone knowing a confirmation id can approve it.
@@ -128,3 +128,39 @@ Shipped as a single branch; **`259 passed`**, ruff clean. No Phase 2B+ work incl
 
 ### Remaining (future phases)
 Credential vault (2B), real LLM/agent loop (2C), real providers (2D–2G), memory/workers (2H), UI (2I), scale/Postgres/signing (2J). Rate limiting / abuse throttling and the legacy prototype archive remain TODO in a later hardening pass (2A focused on identity + input hardening as scoped).
+
+---
+
+## § Phase 3H deliverable (implemented)
+
+Delivered:
+- **`param_schema` enforcement & single source of truth**: Consolidated authoritative `ACTION_PARAM_SCHEMAS`, fail-closed validation before provider dispatch in `ExecutionService`.
+- **Scheduled and recurring jobs**: `Schedule` model with Alembic migration `0004_phase_3h_schedules`, lightweight 5-field cron parser / interval evaluator, in-process scheduler worker, and actor-scoped `/v1/schedules` REST API.
+- **Website Builder capability**: Natural language goal parsing (Hinglish/Hindi/English), multi-page mobile-first static generator, SVG favicon, SEO meta tags, contact forms, 0 broken internal links link-verifier, and zip packaging export.
+- **Official Meta Cloud API / Twilio WhatsApp provider**: Text/template messaging, reaction, read, vault-resolved tokens (`vault:whatsapp/token`), and standardized error taxonomy mapping.
+- **Image Generation provider (`image.generate`)**: OpenAI Images / Stability / compatible endpoint support, safe workspace confinement, and graceful offline fallback.
+- **IRCTC / Travel Booking safe draft model**: Safe search + draft hold + `CONFIRM_STRONG` approval challenge for booking and cancellations; connects through official B2B partner APIs.
+
+---
+
+## § Browser Automation Architecture (Future Design Scope)
+
+### Objective
+Enable ERA to navigate, interact with, and extract content from arbitrary modern web applications (SPAs, dynamic dashboards, login-protected portals) through a secure, self-hosted headless browser environment.
+
+### Design Principles
+1. **Sandboxed Headless Chromium (Playwright)**
+   - Run self-hosted Chromium inside isolated process containers with restricted network namespaces and strict CPU/memory limits.
+   - Separate browser sessions per actor with ephemeral browser contexts that are discarded after task completion to prevent cross-session cookie/credential leakage.
+
+2. **Actions & Risk Tiers**
+   - `browser.navigate` — `RiskLevel.SENSITIVE`: Navigate to allowed HTTP/HTTPS URLs with SSRF protections (blocking loopback/link-local/private RFC1918 ranges).
+   - `browser.screenshot` — `RiskLevel.SENSITIVE`: Capture page viewport screenshots into workspace sandbox.
+   - `browser.extract_dom` — `RiskLevel.SAFE`: Extract structured accessibility tree / text content.
+   - `browser.click` / `browser.fill` — `RiskLevel.MUTATING`: Interactive page inputs (approval-gated when on external origin).
+   - `browser.submit_form` — `RiskLevel.MUTATING`: Submit actions (approval-gated).
+
+3. **Security Invariants**
+   - Headless browser never accesses master credential vault directly — session credentials/cookies are injected through ephemeral context handles.
+   - Path containment for downloaded assets and screenshots via `WorkspaceRoot`.
+   - Timeout and resource caps: strict per-navigation wall-clock budget (30s default).

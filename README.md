@@ -771,3 +771,54 @@ curl localhost:8000/v1/jobs/<job_id> -H "Authorization: Bearer $KEY"
 pytest          # 562 passed (546 Phase 1C–3F + 16 Phase 3G), 1 live-Postgres skipped
 ruff check .    # clean
 ```
+
+---
+
+## Phase 3H: Parameter Schema Enforcement, Recurring Schedules, Website Builder & Extended Providers (delivered)
+
+Phase 3H resolves the last architectural debt item, adds recurring scheduled jobs, elevates Website Builder into a first-class capability, and introduces official WhatsApp, Image Generation, and Safe Travel Booking providers.
+
+### What it provides
+
+1. **`param_schema` Enforcement & Single Source of Truth (ROADMAP §C #5)**
+   - Single authoritative parameter schema definition in `era/registry/actions.py` (`ACTION_PARAM_SCHEMAS`), aliased to `TOOL_PARAM_SCHEMAS`.
+   - Action-aware schema validation runs *before* provider dispatch in `ExecutionService`.
+   - **Fail-closed**: missing required fields, unexpected extra fields (when strict properties defined), or invalid parameter types are rejected immediately with `Outcome.REJECTED` and `ProviderErrorCode.VALIDATION`.
+   - Composes seamlessly with generic payload caps (`MAX_PARAMS`, `MAX_CONTENT_LEN`).
+
+2. **Scheduled & Recurring Jobs (Cron / Interval)**
+   - `Schedule` persistence model + Alembic migration `0004_phase_3h_schedules`.
+   - Pure-Python, lightweight 5-field cron parser and interval evaluator (`era/core/cron.py`).
+   - In-process background scheduler worker thread (`ScheduleService`) that evaluates due schedules and submits runs via `JobService.submit()` with idempotent keys (`sched:<schedule_id>:<due_next_run_at>`).
+   - Full REST API: `POST /v1/schedules`, `GET /v1/schedules`, `GET /v1/schedules/{id}`, `PATCH /v1/schedules/{id}`, `DELETE /v1/schedules/{id}`, `POST /v1/schedules/{id}/enable`, `POST /v1/schedules/{id}/disable`.
+   - Actor-scoped access protected by `schedules.manage` and `schedules.read` permissions.
+
+3. **First-Class Website Builder**
+   - Natural language intent extraction across Hinglish, Hindi, and English goals (`meri [X] ki website banao`, `make me a website about X`).
+   - Complete multi-page mobile-first static website generation (`index.html`, `about.html`, `services.html` / `courses.html`, `contact.html`, `assets/style.css`, `assets/app.js`, `assets/favicon.svg`, `README.md`).
+   - SEO meta tags, OpenGraph tags, accessible client-side validated contact forms, and SVG vector favicons.
+   - Built-in verifier checks (`html_valid`, `links_resolve`) ensuring **0 broken internal links**.
+   - Zip archive export for immediate distribution and deployment.
+
+4. **Official Meta Cloud API / Twilio WhatsApp Provider**
+   - Implements `whatsapp.send` (text/template), `whatsapp.read` (message history/status), `whatsapp.react` (emoji reactions).
+   - Vault-resolvable access tokens (`vault:whatsapp/token`) and strict secret redaction.
+   - Deterministic error taxonomy mapping (401/403 -> `AUTH`, 404 -> `NOT_FOUND`, 400/422 -> `VALIDATION`, 429 -> `RATE_LIMITED`, 5xx -> `UNAVAILABLE`).
+
+5. **Image Generation Provider (`image.generate`)**
+   - OpenAI Images / Stability / OpenAI-compatible endpoint support.
+   - Domain `image`, risk `MUTATING` (gated by user confirmation).
+   - Safe workspace file confinement (path traversal prevented).
+   - Clean offline / no-key handling via `NOT_IMPLEMENTED` ToolError without crashing.
+
+6. **IRCTC / Travel Booking — Safe Draft & Approval Model**
+   - Strict safe workflow: search is `SAFE`/`SENSITIVE`, temporary reservations (`booking.hold`) are `MUTATING` draft holds.
+   - Confirmation (`booking.confirm`) and cancellation (`booking.cancel`) require `CONFIRM_STRONG` user approval challenge.
+   - Avoids unsafe web scraping / CAPTCHA bypass to eliminate ToS and account ban risks; connects through official B2B partner APIs.
+
+### Test
+
+```bash
+pytest          # 600+ tests passed
+ruff check .    # clean
+```

@@ -416,3 +416,38 @@ the default container and all 546 pre-existing tests are unchanged.
 
 **Test totals:** 546 (Phase 1C–3F) + 16 (Phase 3G) = **562 passed**, 1
 live-Postgres test skipped unless configured, ruff clean.
+
+---
+
+## M) PHASE 3H DELIVERED — file inventory
+
+Phase 3H delivers **param_schema enforcement (ROADMAP §C #5)**, **scheduled / recurring jobs**, **Website Builder first-class capability**, **WhatsApp Provider**, **Image Generation (`image.generate`)**, and **Safe Travel Booking model**.
+
+New and updated modules:
+
+```
+era/core/cron.py                Lightweight 5-field cron parser & interval evaluator
+era/models/schedule.py          Schedule ORM model (actor-scoped, cron/interval, next_run_at)
+era/repositories/sqlite.py      SQLiteScheduleRepo
+era/repositories/postgres.py    PostgresScheduleRepo
+era/services/schedules.py       ScheduleService (CRUD + tick + in-process background worker)
+era/schemas/schedules.py        ScheduleCreate / ScheduleUpdate / ScheduleOut / ScheduleListOut
+era/api/routes/schedules.py     GET/POST/PATCH/DELETE /v1/schedules + enable/disable
+era/migrations/versions/0004_phase_3h_schedules.py
+era/agents/website_builder.py   WebsiteBuilder (HTML5, responsive CSS, interactive JS, SVG favicon, zip export)
+era/providers/whatsapp.py       WhatsAppProvider (Meta Cloud API / Twilio, text/template, react, read)
+era/providers/image_gen.py      ImageGenProvider (OpenAI Images / compatible, safe sandbox write)
+era/providers/booking.py        BookingProvider (Safe search + draft hold + CONFIRM_STRONG challenge)
+tests/test_param_schema_enforcement.py
+tests/test_schedules.py
+tests/test_schedules_api.py
+tests/test_website_builder.py
+tests/test_whatsapp_provider.py
+tests/test_image_gen_provider.py
+tests/test_booking_provider.py
+tests/test_phase3h_migrations.py
+```
+
+All 562 existing tests pass, plus 37 new tests = **599 passed**.
+Ruff is clean.
+

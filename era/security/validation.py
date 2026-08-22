@@ -131,6 +131,95 @@ def validate_name(value: str) -> str:
     return value
 
 
+_PARAM_ALIASES: dict[str, tuple[str, ...]] = {
+    "q": ("query",),
+    "content": ("content_from",),
+}
+
+
+def validate_param_schema(params: dict[str, Any], schema: dict[str, Any] | None) -> dict[str, Any]:
+    """Validate action parameters against the action's ActionSpec.param_schema.
+
+    Enforces fail-closed rules (Phase 3H):
+    * Missing required parameters -> ValidationError_
+    * Unknown parameters (when properties declared and additionalProperties is not True) -> ValidationError_
+    * Wrong types (string, integer, number, boolean, array, object) -> ValidationError_
+    * Violations of enum, minLength, maxLength, minimum, maximum -> ValidationError_
+    """
+    if schema is None:
+        return params
+    if not isinstance(params, dict):
+        raise ValidationError_("params must be a JSON object")
+
+    required = schema.get("required") or []
+    for req in required:
+        has_field = req in params and params[req] is not None
+        if not has_field:
+            aliases = _PARAM_ALIASES.get(req, ())
+            if not any(alias in params and params[alias] is not None for alias in aliases):
+                raise ValidationError_(f"missing required parameter: {req!r}")
+
+    properties = schema.get("properties")
+    allow_additional = schema.get("additionalProperties", properties is None)
+
+    if properties is not None:
+        for k, v in params.items():
+            if k not in properties:
+                if not allow_additional:
+                    raise ValidationError_(f"unknown parameter: {k!r}")
+                continue
+            prop_spec = properties[k]
+            expected_type = prop_spec.get("type")
+            if expected_type:
+                _check_prop_type(k, v, expected_type)
+            if "enum" in prop_spec and v not in prop_spec["enum"]:
+                raise ValidationError_(f"parameter {k!r} must be one of {prop_spec['enum']}")
+            if "minLength" in prop_spec and isinstance(v, str) and len(v) < prop_spec["minLength"]:
+                raise ValidationError_(f"parameter {k!r} must be at least {prop_spec['minLength']} chars")
+            if "maxLength" in prop_spec and isinstance(v, str) and len(v) > prop_spec["maxLength"]:
+                raise ValidationError_(f"parameter {k!r} must be at most {prop_spec['maxLength']} chars")
+            if "minimum" in prop_spec and isinstance(v, (int, float)) and v < prop_spec["minimum"]:
+                raise ValidationError_(f"parameter {k!r} must be >= {prop_spec['minimum']}")
+            if "maximum" in prop_spec and isinstance(v, (int, float)) and v > prop_spec["maximum"]:
+                raise ValidationError_(f"parameter {k!r} must be <= {prop_spec['maximum']}")
+
+    return params
+
+
+def _check_prop_type(param_name: str, value: Any, expected_type: str) -> None:
+    if value is None:
+        return
+    if expected_type == "string":
+        if not isinstance(value, str):
+            raise ValidationError_(
+                f"parameter {param_name!r} must be a string, got {type(value).__name__}"
+            )
+    elif expected_type == "integer":
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise ValidationError_(
+                f"parameter {param_name!r} must be an integer, got {type(value).__name__}"
+            )
+    elif expected_type == "number":
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise ValidationError_(
+                f"parameter {param_name!r} must be a number, got {type(value).__name__}"
+            )
+    elif expected_type == "boolean":
+        if not isinstance(value, bool):
+            raise ValidationError_(
+                f"parameter {param_name!r} must be a boolean, got {type(value).__name__}"
+            )
+    elif expected_type == "array":
+        if not isinstance(value, (list, tuple)):
+            raise ValidationError_(
+                f"parameter {param_name!r} must be an array, got {type(value).__name__}"
+            )
+    elif expected_type == "object" and not isinstance(value, dict):
+        raise ValidationError_(
+            f"parameter {param_name!r} must be an object, got {type(value).__name__}"
+        )
+
+
 def validate_challenge(value: str | None) -> str | None:
     """Validate an optional strong-confirmation challenge phrase."""
     if value is None:

@@ -46,8 +46,9 @@ def _slugify(subject: str) -> str:
 
 
 def _extract_subject(goal: str) -> str:
-    """Extract the topic from goals like "make me a welding training website"
-    or "build a website about photography"."""
+    """Extract the topic from goals like "make me a welding training website",
+    "meri photography ki website banao", "build a website about welding",
+    "मेरे लिए एक welding training website बनाओ"."""
     lowered = goal.lower()
     for marker in ("website", "web site", "site"):
         index = lowered.find(marker)
@@ -64,8 +65,12 @@ def _extract_subject(goal: str) -> str:
             r"^(please\s+)?(make|build|create|design|develop)\s+(me\s+)?(a|an|the)?\s*",
             "", subject)
         subject = re.sub(r"^(for|about|on)\s+", "", subject)
+        subject = re.sub(r"^(meri|mera|mere\s+liye\s+ek|mere\s+liye|apni|hamari|ek)\s+", "", subject)
+        subject = re.sub(r"\s+(ki|ke\s+liye|wali|banao|chahiye)$", "", subject)
         subject = _drop_leading_filler(subject)
         subject = subject.strip(" .,!?;:'\"").strip()
+        subject = re.sub(r"\s+(ki|ke\s+liye|wali)$", "", subject)
+        subject = re.sub(r"^(meri|mera|ek)\s+", "", subject)
         return subject or "topic"
     return goal.strip().strip(".!?") or "topic"
 
@@ -185,6 +190,14 @@ class RulePlanner:
             action_type="fs.write",
             params={"path": f"{site_dir}/assets/app.js", "content_from": f"{site_dir}:app.js"},
             verify={"kind": "file_exists", "path": f"{site_dir}/assets/app.js", "min_bytes": 50},
+            depends_on=["structure"],
+        ))
+        tasks.append(Task(
+            id="assets-favicon",
+            title="Write favicon icon",
+            action_type="fs.write",
+            params={"path": f"{site_dir}/assets/favicon.svg", "content_from": f"{site_dir}:favicon.svg"},
+            verify={"kind": "file_exists", "path": f"{site_dir}/assets/favicon.svg", "min_bytes": 30},
             depends_on=["structure"],
         ))
         tasks.append(Task(

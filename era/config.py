@@ -130,6 +130,27 @@ class Settings(BaseSettings):
     #: How long completed/failed job rows are retained for inspection.
     job_ttl_seconds: int = 86400
 
+    # --- Phase 3H: scheduled jobs + providers (WhatsApp, Image, Booking) ----
+    scheduler_enabled: bool = False
+    scheduler_interval_seconds: float = 1.0
+
+    #: WhatsApp Provider (Meta Cloud API / Twilio)
+    whatsapp_api_url: str = "https://graph.facebook.com/v20.0"
+    whatsapp_phone_number_id: str = ""
+    whatsapp_access_token: str = ""  # env or vault:whatsapp/token
+    whatsapp_timeout_seconds: float = 15.0
+
+    #: Image Generation Provider (OpenAI / Stability / Compatible)
+    image_gen_api_key: str = ""  # env or vault:image/token
+    image_gen_base_url: str = "https://api.openai.com/v1"
+    image_gen_model: str = "dall-e-3"
+    image_gen_timeout_seconds: float = 30.0
+
+    #: Travel Booking Provider (Partner API)
+    booking_partner_api_key: str = ""  # env or vault:booking/api_key
+    booking_partner_url: str = ""
+    booking_timeout_seconds: float = 15.0
+
     app_version: str = "0.7.0"
 
     # Note: a missing/malformed policy is always DENY-all (hard fail-closed).

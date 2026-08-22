@@ -54,3 +54,15 @@ class WorkspaceRoot:
     def path_of(self, resolved: Path) -> str:
         """Return the workspace-relative POSIX path of ``resolved``."""
         return resolved.relative_to(self.root).as_posix()
+
+
+def is_safe_relative_path(rel_path: str) -> bool:
+    """Check if ``rel_path`` is a safe relative path (not absolute, no .. traversal)."""
+    if not isinstance(rel_path, str) or not rel_path.strip():
+        return False
+    if len(rel_path) > MAX_PATH_LEN:
+        return False
+    candidate = Path(rel_path)
+    if candidate.is_absolute():
+        return False
+    return all(part != ".." for part in candidate.parts)
