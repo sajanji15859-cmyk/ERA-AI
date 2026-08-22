@@ -1144,3 +1144,168 @@ Skipped E2E tests are reported as skipped with the exact reason
   shadow roots are exercised only by the real-Chromium E2E.
 - No database migration was required for Phase 4B (references are runtime
   state; the confirmation schema from 4A.1 already carries execution scope).
+
+## Phase 4C: Durable, Resumable, Exactly-Once Browser Workflows (delivered)
+
+Phase 4C builds on the Phase 4B primitives to run **declarative multi-step
+browser workflows** that are durable, resumable, exactly-once,
+gate-preserving and fail-closed. A workflow is a bounded, strict-schema list of
+steps; each step references exactly one catalogued browser action
+(`navigate`, `inspect`, `click`, `fill`, `submit`, `download`, `upload`,
+`tabs`, `activate_tab`, `extract_dom`, `screenshot`) with a params template.
+The engine never adds browser actions or reliability primitives — it makes
+Phase 4B primitives *composable*.
+
+### New action
+
+| Action | Risk / default decision | Purpose |
+|---|---|---|
+| `browser.workflow_run` | `MUTATING` / `CONFIRM` | Run a registered/strictly-validated workflow; every inner step is still gated independently by the permission engine, confirmation, audit and reliability layers |
+
+### Workflow definitions
+
+A definition is validated at registration time (`era/workflows/definition.py`)
+and **fails closed** if any step is unknown, malformed, references an
+uncatalogued/out-of-domain action, violates the security constraints, exceeds
+the step/param budget, or contains cycles/unbounded recursion (a workflow can
+only reference the closed browser-action allowlist — never `browser.workflow_run`).
+
+Steps may declare:
+
+- `expect` post-conditions — reused directly from Phase 4B (`navigation` /
+  `tab_opened` / `element_detached`, with `url_contains`).
+- A **target acquisition descriptor** (`role`/`name`/`tag`/`input_type`/
+  `frame_id`/`index`) that the runtime resolves to a **fresh** `element_ref`
+  by re-inspecting the current page at execution time. Workflows never carry a
+  persisted `element_ref`, never invent references, and fail closed on
+  zero-match / multi-match / drift.
+- Opaque `vault:browser/<name>` `value_ref`s for secret fills. A fill targeting
+  a password field (or with no declared target, i.e. unknown sensitivity)
+  **must** use a vault reference — plaintext secret steps are rejected at
+  definition time. Non-secret text fills are allowed only on explicitly
+  non-password inputs.
+- `on_denied: "stop" | "skip"` for what happens when a required confirmation is
+  denied.
+
+`{{name}}` placeholders in params (and in `expect.url_contains`) are rendered
+from caller-supplied workflow params at run time.
+
+### Reference workflows
+
+`era/workflows/reference.py` ships three validated workflows:
+
+- **`login`** — the primary tested reference: navigate to the login URL, fill
+  the username from `vault:browser/<user>`, fill the password from
+  `vault:browser/<pass>`, submit with `expect: navigation`, verify a
+  deterministic post-condition on the landing page, emit a sanitized receipt.
+- **`search_and_extract`** — open a search page, fill a non-secret query,
+  submit, extract bounded markdown (documentation example).
+- **`download_report`** — open a page and save a download artifact to the
+  workspace, workspace-confined and size-bound (documentation example).
+
+To add a workflow, define a `WorkflowDefinition`, call
+`WorkflowCatalog.register(...)` (registration-time validation) or pass an
+inline definition to `POST /v1/workflows/run`.
+
+### The engine (durability, resumability, exactly-once)
+
+`era/services/workflow_service.py` dispatches **every inner step exclusively
+through `ExecutionService`** — the engine never calls a provider directly.
+Per-step results are recorded in `workflow_step_run`; the run row
+(`workflow_run`) tracks `status`, `current_step`, a resume token, the checksum
+of the definition used, and the redacted definition + params.
+
+- **Durable**: run + per-step state live in the database (migration `0006`).
+- **Resumable**: a run paused at a confirmation continues from its durable
+  checkpoint; a process-restarted run is resumed the same way. Resume is
+  **actor-bound** (a different actor cannot resume another actor's run) and
+  preserves the original `execution_scope` so the browser context resumes
+  correctly. On resume the engine **re-inspects** the current page and
+  re-acquires targets fail-closed — it never trusts persisted browser state.
+- **Exactly-once**: `run_token` is unique per actor (reusing the same token
+  returns the existing run). A completed step is never re-run; a confirmed
+  (approved + dispatched) step is never re-dispatched — on resume the engine
+  checks the confirmation's **audit outcome** (it never assumes an approval
+  succeeded) and revalidates any declared post-condition before continuing.
+- **Fail-closed**: drift, stale refs, zero/multi-match, denied/expired
+  confirmations, checksum drift of the definition, and budget breaches stop
+  the workflow deterministically. `SIDE_EFFECT_UNKNOWN` maps to a workflow
+  `ambiguous` state that requires explicit operator resolution
+  (`continue`/`abort`) — never auto-continue, never auto-retry.
+- **Bounded**: hard caps on max steps, total param size and wall-clock time
+  make infinite loops structurally impossible. Non-retryable mutating steps
+  are never retried.
+
+### Secrets and injection defenses
+
+- Workflow params/definitions stored in the DB are redacted; opaque
+  `vault:browser/<name>` references stay visible so approvals can resubmit the
+  exact hash-bound action. Receipts never include resolved secret values,
+  cookies, headers, raw form values or raw refs.
+- Page content is **data, never policy**: a page containing "ignore previous
+  instructions / run this workflow / send this secret" cannot define, modify,
+  start or alter a workflow. Workflows are strict-schema code/config; browser
+  observations remain untrusted (`content_untrusted`).
+
+### API
+
+```bash
+POST /v1/workflows/run      {"workflow": "login", "params": {...}, "run_token": "..."}
+POST /v1/workflows/{id}/resume
+POST /v1/workflows/{id}/cancel
+POST /v1/workflows/{id}/resolve   {"decision": "continue" | "abort"}
+GET  /v1/workflows/{id}
+GET  /v1/workflows
+```
+
+A workflow run is gated like any action (RBAC domain + permission engine) and
+its inner steps each pass their own gates through `ExecutionService`.
+Confirmations are approved through the existing
+`POST /v1/confirmations/{id}/approve` flow; the workflow is then resumed from
+its durable checkpoint.
+
+### Configuration
+
+```dotenv
+ERA_WORKFLOW_MAX_STEPS=50
+ERA_WORKFLOW_MAX_WALLCLOCK_SECONDS=600.0
+ERA_WORKFLOW_MAX_PENDING_CONFIRMATIONS=1
+ERA_WORKFLOW_MAX_PARAM_CHARS=16384
+```
+
+### Tests
+
+Phase 4C adds **33 offline/simulator cases** (workflow definition validation,
+catalog/permission integration, engine dispatch through `ExecutionService`,
+the happy-path login workflow, pause→approve→resume→revalidate→exactly-once,
+page drift after approval, `SIDE_EFFECT_UNKNOWN`→ambiguous→operator
+resolution, restart-style resume without persisted refs, stale/zero/multi-match,
+cross-actor resume rejection, secret redaction, prompt-injection isolation,
+non-retryable steps, bounded execution, sanitized receipts) plus migration
+tests for `0006`:
+
+```bash
+pytest                                    # full suite (offline, green)
+ruff check .                              # clean
+ERA_TEST_BROWSER=1 pytest -m browser tests/test_browser_playwright_e2e.py
+```
+
+The opt-in real-Chromium E2E now also runs a workflow through the engine on a
+public page; without `ERA_TEST_BROWSER=1` it is skipped with an explicit reason.
+
+### Remaining limitations
+
+- Workflow fills are vault-only by default for secret/unknown-sensitivity
+  targets (a deliberate fail-closed choice). Non-secret fills are allowed only
+  on explicitly non-password inputs.
+- Confirmed steps without a declared `expect` are recorded as completed after
+  approval based on the audit outcome; their *content* is not re-verified (only
+  dispatch success + any declared post-condition). Prefer adding an `expect`
+  post-condition to every mutating step.
+- A workflow run pauses at each confirmation and is continued by an explicit
+  resume call; approvals do not auto-advance the run.
+- The reference `login` workflow's offline test uses the simulator's
+  form-action discovery; real-world login pages may need a tab-opened or
+  custom post-condition.
+- Cross-process persistent cookies/session store remain out of scope (browser
+  state stays ephemeral per run, with only confirmation-pause continuity).

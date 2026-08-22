@@ -19,6 +19,7 @@ from era.repositories.base import (
     ScheduleRepo,
     UserRepo,
     VaultSecretRepo,
+    WorkflowRunRepo,
 )
 from era.security.signing import AuditSigner
 
@@ -39,6 +40,7 @@ class RepositoryBundle:
     idempotency: IdempotencyRepo
     job: JobRepo
     schedule: ScheduleRepo
+    workflow: WorkflowRunRepo
     backend: str
 
 
@@ -64,6 +66,7 @@ def build_repositories(
             SQLiteScheduleRepo,
             SQLiteUserRepo,
             SQLiteVaultRepo,
+            SQLiteWorkflowRunRepo,
         )
 
         return RepositoryBundle(
@@ -79,6 +82,7 @@ def build_repositories(
             idempotency=SQLiteIdempotencyRepo(),
             job=SQLiteJobRepo(),
             schedule=SQLiteScheduleRepo(),
+            workflow=SQLiteWorkflowRunRepo(),
             backend="sqlite",
         )
     if backend == "postgresql":
@@ -95,6 +99,7 @@ def build_repositories(
             PostgresScheduleRepo,
             PostgresUserRepo,
             PostgresVaultRepo,
+            PostgresWorkflowRunRepo,
         )
 
         return RepositoryBundle(
@@ -110,6 +115,7 @@ def build_repositories(
             idempotency=PostgresIdempotencyRepo(),
             job=PostgresJobRepo(),
             schedule=PostgresScheduleRepo(),
+            workflow=PostgresWorkflowRunRepo(),
             backend="postgresql",
         )
     raise ValueError(

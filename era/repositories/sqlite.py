@@ -18,6 +18,8 @@ from era.models import (
     Schedule,
     User,
     VaultSecret,
+    WorkflowRun,
+    WorkflowStepRun,
 )
 from era.repositories.audit import build_audit_row, verify_audit_rows
 from era.repositories.base import NewAuditEntry, VerifyResult
@@ -332,6 +334,53 @@ class SQLiteScheduleRepo:
             Schedule.next_run_at <= now_iso,
         ).order_by(Schedule.next_run_at.asc()).limit(limit))
         return list(session.execute(stmt).scalars().all())
+
+
+class SQLiteWorkflowRunRepo:
+    """Durable workflow run storage (Phase 4C)."""
+
+    def create_run(self, session, run: WorkflowRun) -> WorkflowRun:
+        session.add(run)
+        session.flush()
+        return run
+
+    def get_run(self, session, run_id: str) -> WorkflowRun | None:
+        return session.get(WorkflowRun, run_id)
+
+    def get_run_by_token(self, session, actor_id: str, run_token: str) -> WorkflowRun | None:
+        stmt = select(WorkflowRun).where(
+            WorkflowRun.actor_id == actor_id,
+            WorkflowRun.run_token == run_token,
+        )
+        return session.execute(stmt).scalars().first()
+
+    def update_run(self, session, run: WorkflowRun) -> WorkflowRun:
+        session.add(run)
+        session.flush()
+        return run
+
+    def list_runs_by_actor(self, session, actor_id: str, *, limit: int = 50) -> list[WorkflowRun]:
+        stmt = (select(WorkflowRun).where(WorkflowRun.actor_id == actor_id)
+                .order_by(WorkflowRun.created_at.desc()).limit(limit))
+        return list(session.execute(stmt).scalars().all())
+
+    def create_step(self, session, step: WorkflowStepRun) -> WorkflowStepRun:
+        session.add(step)
+        session.flush()
+        return step
+
+    def get_step(self, session, step_id: str) -> WorkflowStepRun | None:
+        return session.get(WorkflowStepRun, step_id)
+
+    def list_steps(self, session, run_id: str) -> list[WorkflowStepRun]:
+        stmt = (select(WorkflowStepRun).where(WorkflowStepRun.run_id == run_id)
+                .order_by(WorkflowStepRun.step_index.asc()))
+        return list(session.execute(stmt).scalars().all())
+
+    def update_step(self, session, step: WorkflowStepRun) -> WorkflowStepRun:
+        session.add(step)
+        session.flush()
+        return step
 
 
 class SQLiteCircuitBreakerStateRepo:

@@ -830,6 +830,11 @@ class SimulatedBrowserTransport:
             tab.submitted = True
             path, tag = desc["path"], desc["tag"]
             action = desc.get("action")
+            if not action:
+                # A submit button/control inside a form: navigate to the
+                # nearest ancestor form's resolved action (offline analogue of
+                # the Playwright requestSubmit path).
+                action = self._ancestor_form_action(tab, path)
             if action and action in self.pages:
                 self._navigate_tab(
                     session_key, session, tab, action, self.pages[action],
@@ -1119,6 +1124,22 @@ class SimulatedBrowserTransport:
                         _title_from_html(self.pages[href]),
                     )
                 break
+
+    @staticmethod
+    def _ancestor_form_action(tab: _SimulatedTab, path: list[int]) -> str | None:
+        """Return the resolved action of the nearest ancestor ``<form>`` node."""
+        best: tuple[tuple[int, ...], str] | None = None
+        for desc in _walk_html(tab.html, base_url=tab.url):
+            if desc.get("tag") != "form":
+                continue
+            form_path = tuple(desc.get("path") or [])
+            action = desc.get("action")
+            if not form_path or not action:
+                continue
+            if tuple(path[: len(form_path)]) == form_path and (
+                    best is None or len(form_path) > len(best[0])):
+                best = (form_path, action)
+        return best[1] if best else None
 
     def _download_target(self, session_key: str, tab: _SimulatedTab,
                          element_ref: str | None, selector: str | None,

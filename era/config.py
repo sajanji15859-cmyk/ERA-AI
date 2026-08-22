@@ -116,6 +116,17 @@ class Settings(BaseSettings):
     #: Hard bound on a single browser.upload source file (bytes).
     browser_max_upload_bytes: int = 104857600   # 100 MiB
 
+    # --- Phase 4C: durable, resumable browser workflows -----------------------
+    #: Hard cap on the number of steps in one workflow definition.
+    workflow_max_steps: int = 50
+    #: Hard wall-clock budget for one workflow run (seconds). Overrun -> FAILED.
+    workflow_max_wallclock_seconds: float = 600.0
+    #: Max pending confirmations a workflow may hold at once (sequential engine
+    #: means 1; kept configurable for future parallel steps).
+    workflow_max_pending_confirmations: int = 1
+    #: Max total rendered-param characters across a workflow definition.
+    workflow_max_param_chars: int = 16384
+
     # --- Phase 3C: credential vault + provider secrets -----------------------
     #: Master key for the credential vault: 32 bytes as 64 hex chars or 44
     #: base64 chars. Env-only — never commit a real key. Empty = the vault is

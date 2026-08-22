@@ -11,9 +11,11 @@ from era.models.policy import PolicyVersion
 from era.models.schedule import Schedule
 from era.models.user import ApiKey, User
 from era.models.vault import VaultSecret
+from era.models.workflow import WorkflowRun, WorkflowStepRun
 
 __all__ = [
     "AgentRun", "ApiKey", "AuditLogEntry", "Base", "CircuitBreakerStateRow",
     "IdempotencyRecord", "Job", "MemoryEntry", "PendingConfirmation",
-    "PolicyVersion", "Schedule", "User", "VaultSecret",
+    "PolicyVersion", "Schedule", "User", "VaultSecret", "WorkflowRun",
+    "WorkflowStepRun",
 ]

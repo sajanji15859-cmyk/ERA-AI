@@ -1,4 +1,4 @@
-"""Opt-in real Chromium E2E tests for Phase 4A.1 and Phase 4B.
+"""Opt-in real Chromium E2E tests for Phase 4A.1, Phase 4B and Phase 4C.
 
 Run with a locally installed Playwright Chromium binary and public network:
 
@@ -15,9 +15,13 @@ import os
 
 import pytest
 
+from era.config import Settings
+from era.container import build_container
 from era.core.action import Action
 from era.core.context import ExecutionContext
 from era.providers.browser import BrowserProvider
+from era.security.rbac import role_domain_allowed
+from era.workflows.definition import WorkflowDefinition, WorkflowStep
 
 pytestmark = pytest.mark.browser
 
@@ -115,3 +119,49 @@ def test_real_chromium_inspect_and_element_ref_workflow(tmp_path):
             raise AssertionError("stale element_ref resolved instead of failing closed")
     finally:
         provider.close()
+
+
+@pytest.mark.skipif(os.getenv("ERA_TEST_BROWSER") != "1", reason=_SKIP_REASON)
+def test_real_chromium_workflow_engine(tmp_path):
+    """Phase 4C: run a declarative workflow through the engine on real Chromium.
+
+    Exercises the full engine path (workflow engine -> ExecutionService -> real
+    Playwright Chromium provider -> durable run) against a public page. The
+    workflow uses only SAFE/SENSITIVE steps so it completes without a
+    confirmation pause, and needs no vault (no secret fills).
+    """
+    url = os.getenv("ERA_TEST_BROWSER_URL", "https://example.com")
+    container = build_container(
+        Settings(database_url=f"sqlite:///{tmp_path}/wf-e2e.db"),
+        providers=[BrowserProvider(workspace_root=tmp_path, timeout_seconds=20)],
+    )
+    try:
+        user = container.auth_service.create_user(username="wfe2e", role="user")
+        ctx = ExecutionContext(actor_id=user.id, session_id="e2e")
+
+        def guard(action_type: str) -> bool:
+            spec = container.catalog.get(action_type)
+            return spec is not None and role_domain_allowed("user",
+                                                            spec.capability_domain)
+
+        wf = WorkflowDefinition(name="e2e_browse", version=1, steps=[
+            WorkflowStep(id="nav", action="browser.navigate",
+                         params={"url": url, "wait_until": "load"}),
+            WorkflowStep(id="extract", action="browser.extract_dom",
+                         params={"max_chars": 5_000}),
+        ])
+        run = container.workflow_service.start(
+            definition=wf, params={}, ctx=ctx, run_token="e2e-run",
+            domain_allowed=guard)
+        assert run.status == "completed"
+        run, steps = container.workflow_service.get_run(run.id, ctx)
+        assert [s.step_id for s in steps] == ["nav", "extract"]
+        assert all(s.status == "completed" for s in steps)
+        # The extract receipt is bounded and contains no secrets/refs.
+        assert "element_ref" not in str(steps[1].result_receipt)
+    finally:
+        container.engine.dispose()
+        for provider in container.registry.list_providers():
+            close = getattr(provider, "close", None)
+            if callable(close):
+                close()

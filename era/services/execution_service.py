@@ -311,7 +311,8 @@ class ExecutionService:
         status = {Outcome.EXECUTED: "executed", Outcome.FAILED: "failed",
                   Outcome.REJECTED: "rejected"}[outcome]
         return ExecutionResponse(status=status, decision=decision, result=result,
-                                 message=None if result.success else summary)
+                                 message=None if result.success else summary,
+                                 error_code=error_code.value if error_code else None)
 
     def _timeout_budget(self) -> float:
         return float(getattr(self.settings, "provider_timeout_seconds", 0.0) or 0.0)
