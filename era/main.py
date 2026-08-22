@@ -42,10 +42,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if settings.agent_enabled:
         from era.agent_runtime import build_agent_container
         container = build_agent_container(settings)
-        title = "ERA AI — Agent (Phase 4A)"
+        title = "ERA AI — Agent (Phase 5A)"
     else:
         container = build_container(settings)
-        title = "ERA AI — Phase 4A"
+        title = "ERA AI — Phase 5A"
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):

@@ -86,9 +86,21 @@ class Settings(BaseSettings):
     agent_llm_max_tokens: int = 2048
     #: Provider caps.
     workspace_max_file_bytes: int = 1_048_576
+
+    # --- Phase 5A: Web provider ------------------------------------------------
+    #: Bounded public-HTTPS text fetch response size.
     web_max_fetch_bytes: int = 2_097_152
+    #: Per-actor rolling window for all web provider network operations.
+    web_max_fetches_per_minute: int = 30
+    web_rate_limit_window_seconds: float = 60.0
     web_timeout_seconds: float = 15.0
-    web_user_agent: str = "ERA-Agent/0.4"
+    web_user_agent: str = "ERA-Agent/0.9.0"
+    #: Optional external search adapter. Empty/"duckduckgo" stays keyless.
+    #: Credentials may be a direct env value or vault:web/search_api_key.
+    web_search_provider: str = ""
+    web_search_api_key: str = ""
+    #: Required only by a Google Custom Search deployment.
+    web_search_engine_id: str = ""
 
     # --- Phase 4A: self-hosted browser automation ----------------------------
     browser_headless: bool = True
@@ -96,7 +108,7 @@ class Settings(BaseSettings):
     browser_viewport_width: int = 1280
     browser_viewport_height: int = 800
     browser_user_agent: str = (
-        "ERA-Agent/0.8.1 (+https://github.com/sajanji15859-cmyk/ERA-AI)"
+        "ERA-Agent/0.9.0 (+https://github.com/sajanji15859-cmyk/ERA-AI)"
     )
     browser_max_contexts: int = 32
     browser_context_idle_seconds: float = 300.0
@@ -165,6 +177,24 @@ class Settings(BaseSettings):
     email_smtp_starttls: bool = False
     email_smtp_ssl: bool = False
     email_smtp_timeout_seconds: float = 10.0
+    #: Provider-side bounds. These apply even to calls that do not arrive via
+    #: the public API (e.g. workflow/scheduler dispatch).
+    email_max_recipients: int = 10
+    email_max_body_bytes: int = 102_400
+    email_max_attachments: int = 5
+    email_max_attachment_bytes: int = 5_242_880
+    email_max_sends_per_hour: int = 20
+
+    #: IMAP read/search is a separate opt-in provider. Empty host leaves both
+    #: actions with StubProvider; user/password may use vault references.
+    email_imap_host: str = ""
+    email_imap_port: int = 993
+    email_imap_user: str = ""
+    email_imap_password: str = ""
+    email_imap_mailbox: str = "INBOX"
+    email_imap_timeout_seconds: float = 15.0
+    email_imap_max_messages: int = 50
+    email_imap_max_body_preview_bytes: int = 5_120
 
     # --- Phase 3D: GitHub provider -------------------------------------------
     github_api_base_url: str = "https://api.github.com"
@@ -199,11 +229,24 @@ class Settings(BaseSettings):
     #: Phase 4E: how often the confirmation expiry sweeper runs (seconds). 0 disables.
     confirmation_sweeper_interval_seconds: float = 60.0
 
-    #: WhatsApp Provider (Meta Cloud API / Twilio)
+    #: WhatsApp Provider (Meta Cloud API)
     whatsapp_api_url: str = "https://graph.facebook.com/v20.0"
     whatsapp_phone_number_id: str = ""
     whatsapp_access_token: str = ""  # env or vault:whatsapp/token
     whatsapp_timeout_seconds: float = 15.0
+    #: Optional Meta webhook verification secret (env or vault reference).
+    whatsapp_webhook_verify_token: str = ""
+    #: Meta app secret for X-Hub-Signature-256 POST verification (env/vault ref).
+    whatsapp_webhook_app_secret: str = ""
+    whatsapp_max_messages_per_hour: int = 100
+    whatsapp_max_message_chars: int = 1_000
+    whatsapp_max_media_attachments: int = 5
+    whatsapp_max_recipients_per_call: int = 10
+    whatsapp_max_read_messages: int = 50
+    whatsapp_max_lookback_hours: int = 24
+    #: When webhook state exists, free-form messages must have a recent inbound
+    #: contact. Meta enforces this independently at the API boundary as well.
+    whatsapp_enforce_customer_window: bool = True
 
     #: Image Generation Provider (OpenAI / Stability / Compatible)
     image_gen_api_key: str = ""  # env or vault:image/token
@@ -211,12 +254,37 @@ class Settings(BaseSettings):
     image_gen_model: str = "dall-e-3"
     image_gen_timeout_seconds: float = 30.0
 
-    #: Travel Booking Provider (Partner API)
+    #: Travel Booking Provider (official partner API only)
     booking_partner_api_key: str = ""  # env or vault:booking/api_key
     booking_partner_url: str = ""
     booking_timeout_seconds: float = 15.0
+    #: Monetary amounts supplied to the booking provider are integer minor
+    #: units (paise/cents), never floating-point major currency values.
+    booking_max_amount_minor: int = 10_000_000
+    booking_hold_ttl_seconds: int = 86_400
 
-    app_version: str = "0.8.1"
+    #: Android ADB provider. It is built only when a device id, pairing token,
+    #: and a localhost-only (or explicitly TLS-wrapped) endpoint are supplied.
+    android_adb_path: str = "adb"
+    android_device_id: str = ""
+    android_adb_host: str = ""
+    android_adb_port: int = 5555
+    android_adb_tls_enabled: bool = False
+    android_pairing_token: str = ""  # env or vault:device/pairing_token
+    android_timeout_seconds: float = 15.0
+    android_workspace_root: str = ""
+    android_max_shell_commands_per_minute: int = 10
+    android_max_screenshot_bytes: int = 10_485_760
+    android_max_contacts: int = 100
+    android_max_sms_messages: int = 50
+    android_max_notifications: int = 50
+    android_max_payment_amount_minor: int = 1_000_000
+    #: JSON list via ERA_ANDROID_SAFE_APP_PACKAGES.
+    android_safe_app_packages: list[str] = [
+        "com.android.chrome", "com.android.settings", "com.google.android.apps.maps",
+    ]
+
+    app_version: str = "0.9.0"
 
     # Note: a missing/malformed policy is always DENY-all (hard fail-closed).
     # This is intentionally not configurable — weakening it is a footgun.

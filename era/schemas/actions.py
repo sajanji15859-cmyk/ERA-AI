@@ -115,7 +115,7 @@ class EvaluateResponse(BaseModel):
 
 
 ExecutionStatus = Literal[
-    "executed", "failed", "rejected", "confirmation_required", "denied"
+    "executed", "failed", "rejected", "confirmation_required", "awaiting_approval", "denied"
 ]
 
 

@@ -224,8 +224,8 @@ class ImageGenProvider:
             raise ToolError(f"Image API validation error ({status_code}): {err_msg}",
                             provider_id=self.id, code=ProviderErrorCode.VALIDATION) from exc
         if status_code == 429:
-            raise ToolError("Image API rate limit exceeded",
-                            provider_id=self.id, code=ProviderErrorCode.RATE_LIMITED) from exc
+            raise ToolError("Image API temporarily unavailable",
+                            provider_id=self.id, code=ProviderErrorCode.UNAVAILABLE) from exc
         if status_code >= 500:
             raise ToolError(f"Image API server error ({status_code}): {err_msg}",
                             provider_id=self.id, code=ProviderErrorCode.UNAVAILABLE) from exc

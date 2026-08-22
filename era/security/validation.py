@@ -26,6 +26,10 @@ CONTENT_ACTIONS: frozenset[str] = frozenset({
     "github.file_commit",
     "code.run",
     "code.exec",
+    # SMTP bodies are bounded by EmailSmtpProvider at 100 KiB. They must not
+    # be rejected by the generic 2,000-char action cap before that provider
+    # can apply its byte-aware boundary.
+    "email.send",
 })
 #: String cap for content-bearing params of the actions above.
 MAX_CONTENT_LEN = 1_048_576
@@ -173,6 +177,10 @@ def validate_param_schema(params: dict[str, Any], schema: dict[str, Any] | None)
             expected_type = prop_spec.get("type")
             if expected_type:
                 _check_prop_type(k, v, expected_type)
+            if "minItems" in prop_spec and isinstance(v, (list, tuple)) and len(v) < prop_spec["minItems"]:
+                raise ValidationError_(f"parameter {k!r} must contain at least {prop_spec['minItems']} items")
+            if "maxItems" in prop_spec and isinstance(v, (list, tuple)) and len(v) > prop_spec["maxItems"]:
+                raise ValidationError_(f"parameter {k!r} must contain at most {prop_spec['maxItems']} items")
             if "enum" in prop_spec and v not in prop_spec["enum"]:
                 raise ValidationError_(f"parameter {k!r} must be one of {prop_spec['enum']}")
             if "minLength" in prop_spec and isinstance(v, str) and len(v) < prop_spec["minLength"]:
@@ -239,9 +247,20 @@ def _matches_schema_condition(params: dict[str, Any], condition: dict[str, Any])
     return not (isinstance(negated, dict) and _matches_schema_condition(params, negated))
 
 
-def _check_prop_type(param_name: str, value: Any, expected_type: str) -> None:
+def _check_prop_type(param_name: str, value: Any, expected_type: str | list[str] | tuple[str, ...]) -> None:
     if value is None:
         return
+    if isinstance(expected_type, (list, tuple)):
+        # JSON Schema permits a union of primitive types. Keep the validator's
+        # supported subset explicit and fail closed when none match.
+        for candidate in expected_type:
+            try:
+                _check_prop_type(param_name, value, candidate)
+                return
+            except ValidationError_:
+                pass
+        choices = ", ".join(str(item) for item in expected_type)
+        raise ValidationError_(f"parameter {param_name!r} must be one of types: {choices}")
     if expected_type == "string":
         if not isinstance(value, str):
             raise ValidationError_(

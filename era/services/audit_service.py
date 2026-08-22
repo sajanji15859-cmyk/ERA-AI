@@ -13,7 +13,7 @@ from era.core.enums import Decision, Outcome, RiskLevel
 from era.core.tool_registry import ActionCatalog
 from era.models import AuditLogEntry
 from era.repositories.base import AuditRepo, NewAuditEntry, VerifyResult
-from era.security.redaction import redact
+from era.security.redaction import redact, sensitive_fields_for_action
 
 #: Audit rows stay bounded: string param values longer than this are stored
 #: as length markers (Phase 3B hardening — file content etc. must not bloat
@@ -37,7 +37,10 @@ class AuditService:
                credential_ref: str | None = None,
                meta: dict | None = None) -> AuditLogEntry:
         spec = self.catalog.get(action.action_type)
-        secret_fields = spec.secret_fields if spec else frozenset()
+        secret_fields = sensitive_fields_for_action(
+            action.action_type,
+            spec.secret_fields if spec else frozenset(),
+        )
         entry = NewAuditEntry(
             actor_id=ctx.actor_id,
             action_type=action.action_type,

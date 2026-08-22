@@ -74,7 +74,7 @@ from era.security.vault import VaultError, is_vault_ref, parse_vault_ref
 DEFAULT_TIMEOUT_SECONDS = 30.0
 DEFAULT_VIEWPORT_WIDTH = 1280
 DEFAULT_VIEWPORT_HEIGHT = 800
-DEFAULT_USER_AGENT = "ERA-Agent/0.8.1 (+https://github.com/sajanji15859-cmyk/ERA-AI)"
+DEFAULT_USER_AGENT = "ERA-Agent/0.9.0 (+https://github.com/sajanji15859-cmyk/ERA-AI)"
 MAX_DOM_CHARS = 100_000
 DEFAULT_DOM_CHARS = 50_000
 MAX_DOM_SOURCE_CHARS = 2_000_000
@@ -2772,7 +2772,7 @@ class BrowserProvider:
         return ProviderInfo(
             id=self.id,
             action_types=self.action_types,
-            version="0.8.1",
+            version="0.9.0",
             display_name="Browser (self-hosted Playwright Chromium)",
             is_stub=False,
             capabilities=(

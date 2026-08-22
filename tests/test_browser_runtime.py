@@ -20,7 +20,7 @@ def test_browser_settings_defaults_and_version():
     assert settings.browser_viewport_width == 1280
     assert settings.browser_viewport_height == 800
     assert settings.browser_user_agent == (
-        "ERA-Agent/0.8.1 (+https://github.com/sajanji15859-cmyk/ERA-AI)"
+        "ERA-Agent/0.9.0 (+https://github.com/sajanji15859-cmyk/ERA-AI)"
     )
     assert settings.browser_max_contexts == 32
     assert settings.browser_context_idle_seconds == 300.0
@@ -31,8 +31,8 @@ def test_browser_settings_defaults_and_version():
     assert settings.browser_max_download_bytes == 209715200
     assert settings.browser_max_upload_bytes == 104857600
     assert settings.provider_result_max_bytes == 524288
-    assert settings.app_version == "0.8.1"
-    assert __version__ == "0.8.1"
+    assert settings.app_version == "0.9.0"
+    assert __version__ == "0.9.0"
 
 
 def test_browser_settings_load_exact_era_environment_names(monkeypatch):
