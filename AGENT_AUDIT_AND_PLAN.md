@@ -656,3 +656,62 @@ public page when `ERA_TEST_BROWSER=1`. `ruff check era tests` clean;
 `git diff --check` clean; migration head is `0006_phase_4c_workflows`
 (fresh DBs reach head, legacy DBs upgrade cleanly, downgrade drops only the
 new tables).
+
+## R) PHASE 4D DELIVERED — Workflow Operations & Governance
+
+Version **0.8.1**; adds migration `0007_phase_4d_operations`.
+
+### What changed
+
+- **Scheduling** (`workflow_schedule` + `POST /v1/workflow-schedules`): reuses
+  the Phase 3H cron/interval machinery; a due schedule starts through the same
+  `WorkflowService` gates as an interactive run (never a confirmation bypass).
+  Deterministic run token `sched:<actor>:<schedule_id>:<due_time>` gives
+  crash/double-due exactly-once dedup.
+- **Bounded DAG**: `depends_on`, `parallel` blocks with `max_concurrency`, and
+  pure `condition` predicates (`step_result`, `url_contains`,
+  `element_present`) over *prior sanitized step receipts*. Validation rejects
+  cycles, unknown deps, parallel-sibling conditional dependencies, unbounded
+  fan-out and non-allowed predicates. Each step remains individually gated.
+- **Governance**: DB-backed concurrency caps per actor/workflow, a rolling
+  per-window rate limit, and step/cost budgets. A cap breach starts the run as
+  `FAILED` with a machine-readable `governance_code` and is audited.
+- **Templates & versioning**: immutable published versions with `params_schema`;
+  a run pins the exact template+version+checksum and fails closed on drift.
+- **Operator review**: admin-only awaiting listing, run timeline, cross-actor
+  resolve/cancel/approve with audit trail and sanitized outputs.
+- **Observability**: bounded, actor-scoped filter + aggregation queries.
+
+### Security notes
+
+- Scheduling and templating never weaken the Phase 4C gates. A scheduled or
+  templated run is exactly as safe as an interactive one; confirmation pauses
+  still apply.
+- Operator surfaces never expose plaintext values, raw refs, cookies, headers
+  or page content; the timeline and receipts go through the same
+  sanitization/redaction boundaries.
+- Advisory counters are the only mutable admission state and are bounded by
+  settings; DB-level atomic upserts prevent races across workers.
+- Parallel mutating dispatch is additionally bounded by
+  `workflow_max_pending_confirmations` (default 1), so a parallel block cannot
+  exceed the configured confirmation hold.
+
+### Validation
+
+Full offline suite green (788 passed, 4 optional skips). Phase 4D adds
+offline/simulator tests for scheduling, DAG/parallel/condition validation and
+execution, governance caps and DB racing, templates/versioning, operator review
+and observability, plus migration tests for `0007`. `ruff check era tests`
+clean; `git diff --check` clean; migration head is
+`0007_phase_4d_operations` (fresh DBs reach head, legacy 0001–0006 DBs upgrade
+cleanly, downgrade drops only the new tables/columns).
+
+### Known limitations
+
+- The scheduler is in-process (Phase 3H reuse); production should run one
+  scheduler worker per DB.
+- True parallel mutating steps are sequenced by the pending-confirmation bound;
+  SAFE read steps can run concurrently.
+- No template delegation beyond the catalogued browser-action allowlist and no
+  free-form scripting DSL.
+- Cross-process persistent cookies/session store remain out of scope.

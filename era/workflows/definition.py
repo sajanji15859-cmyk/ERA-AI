@@ -32,6 +32,7 @@ at run time.
 from __future__ import annotations
 
 import re
+from collections import deque
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -144,6 +145,84 @@ class WorkflowExpect(BaseModel):
     url_contains: str | None = None
 
 
+#: Allowed pure predicate kinds over prior step receipts/observations.
+ALLOWED_CONDITION_KINDS = frozenset({
+    "step_result",   # step_result of a prior step equals/not-equals value
+    "url_contains",  # a prior inspect/navigate observation contains a string
+    "element_present",  # a prior inspect observation matched an element
+})
+_CONDITION_OPS = frozenset({"==", "!="})
+
+
+class WorkflowCondition(BaseModel):
+    """A pure, schema-constrained predicate over prior step observations.
+
+    Never arbitrary code and never driven by raw webpage text. The predicate is
+    evaluated only against sanitized step receipts produced by the run itself
+    (e.g. an ``inspect`` URL, a ``step_result`` value, an ``element_present``
+    boolean) — never against unredacted page content.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: str
+    #: Prior step id for ``step_result`` / ``element_present``.
+    step_id: str | None = None
+    #: ``==`` or ``!=`` (only used by ``step_result``).
+    op: str | None = None
+    #: Scalar comparison value (string / bool / int / float / null).
+    value: Any = None
+
+    @model_validator(mode="after")
+    def _validate(self) -> WorkflowCondition:
+        if self.kind not in ALLOWED_CONDITION_KINDS:
+            _fail(f"condition.kind must be one of {sorted(ALLOWED_CONDITION_KINDS)}")
+        if self.op is not None and self.op not in _CONDITION_OPS:
+            _fail("condition.op must be '==' or '!='")
+        if self.kind == "step_result":
+            if not self.step_id:
+                _fail("step_result condition requires step_id")
+            if self.op not in _CONDITION_OPS:
+                _fail("step_result condition requires op '==' or '!='")
+            if not isinstance(self.value, (str, bool, int, float)) and self.value is not None:
+                _fail("step_result condition value must be a scalar or null")
+        elif self.kind == "url_contains":
+            if self.value is None or not isinstance(self.value, str) or not self.value:
+                _fail("url_contains condition requires a non-empty string value")
+            if len(self.value) > 1000:
+                _fail("url_contains condition value too long")
+        elif self.kind == "element_present":
+            if not self.step_id:
+                _fail("element_present condition requires step_id")
+        return self
+
+
+class WorkflowParallelBlock(BaseModel):
+    """A bounded parallel group of existing steps (no new step kinds).
+
+    ``depends_on`` lets an entire group wait on prior steps; ``max_concurrency``
+    is the hard cap for the block (default 1 = the historical sequential
+    behavior).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    steps: list[str] = Field(default_factory=list)
+    depends_on: list[str] = Field(default_factory=list)
+    max_concurrency: int = Field(default=1, ge=1, le=8)
+
+    @model_validator(mode="after")
+    def _validate(self) -> WorkflowParallelBlock:
+        if len(self.steps) < 2:
+            _fail("parallel block must contain at least two steps")
+        if len(set(self.steps)) != len(self.steps):
+            _fail("parallel block contains duplicate step ids")
+        for sid in self.steps + self.depends_on:
+            if not _IDENTIFIER_RE.match(sid):
+                _fail(f"parallel block references invalid step id {sid!r}")
+        return self
+
+
 class WorkflowStep(BaseModel):
     """One workflow step referencing exactly one catalogued browser action."""
 
@@ -161,6 +240,10 @@ class WorkflowStep(BaseModel):
     #: Optional name of a workflow param to capture a sanitized bit of the step
     #: result into (used by the reference verify step). Never secrets.
     outputs: dict[str, str] = Field(default_factory=dict)
+    #: Phase 4D: explicit DAG dependency list (empty = before any dependent).
+    depends_on: list[str] = Field(default_factory=list)
+    #: Phase 4D: pure predicate over prior step receipts/observations.
+    condition: WorkflowCondition | None = None
 
     @model_validator(mode="after")
     def _validate(self) -> WorkflowStep:
@@ -176,6 +259,15 @@ class WorkflowStep(BaseModel):
         if self.target is not None and self.target.index is not None \
                 and self.target.index < 0:
             _fail("target.index must be >= 0")
+        if len(self.depends_on) > 8:
+            _fail("step depends_on is limited to 8 dependencies (bounded fan-out)")
+        if self.id in self.depends_on:
+            _fail(f"step {self.id!r} cannot depend on itself")
+        for dep in self.depends_on:
+            if not _IDENTIFIER_RE.match(dep):
+                _fail(f"step {self.id!r} references invalid dependency {dep!r}")
+        if self.condition is not None and self.condition.step_id == self.id:
+            _fail(f"step {self.id!r} condition cannot reference itself")
         return self
 
 
@@ -190,6 +282,8 @@ class WorkflowDefinition(BaseModel):
     #: Optional JSON-schema describing caller-supplied params (for placeholders).
     params_schema: dict[str, Any] = Field(default_factory=dict)
     steps: list[WorkflowStep] = Field(default_factory=list)
+    #: Phase 4D: bounded parallel blocks over the declared steps.
+    parallel: list[WorkflowParallelBlock] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _validate(self) -> WorkflowDefinition:
@@ -205,6 +299,15 @@ class WorkflowDefinition(BaseModel):
             if step.id in ids:
                 _fail(f"duplicate step id: {step.id!r}")
             ids.add(step.id)
+        if self.parallel:
+            seen_parallel: set[str] = set()
+            for block in self.parallel:
+                for sid in block.steps:
+                    if sid not in ids:
+                        _fail(f"parallel block references unknown step {sid!r}")
+                    if sid in seen_parallel:
+                        _fail(f"step {sid!r} appears in more than one parallel block")
+                    seen_parallel.add(sid)
         return self
 
 
@@ -313,6 +416,74 @@ def _approx_chars(value: Any) -> int:
     return len(str(value))
 
 
+def _step_ids(definition: WorkflowDefinition) -> dict[str, WorkflowStep]:
+    return {step.id: step for step in definition.steps}
+
+
+def _validate_dag(definition: WorkflowDefinition) -> None:
+    """Validate the bounded DAG: cycles, unknown deps, unbounded fan-out."""
+    by_id = _step_ids(definition)
+    if len(by_id) != len(definition.steps):
+        _fail("duplicate step id")
+
+    edges: dict[str, list[str]] = {sid: [] for sid in by_id}
+    indegree: dict[str, int] = {sid: 0 for sid in by_id}
+    for step in definition.steps:
+        for dep in step.depends_on:
+            if dep not in by_id:
+                _fail(f"step {step.id!r} depends on unknown step {dep!r}")
+            edges[dep].append(step.id)
+            indegree[step.id] += 1
+
+    # Unbounded fan-out rejection: no step may be depended on by > 8 steps.
+    for sid, deps in edges.items():
+        if len(deps) > 8:
+            _fail(f"step {sid!r} has unbounded fan-out ({len(deps)} dependents)")
+
+    # Kahn topological sort; a remaining node means a cycle (after counting
+    # only declared edges).
+    queue = deque(sid for sid, deg in indegree.items() if deg == 0)
+    seen = 0
+    while queue:
+        node = queue.popleft()
+        seen += 1
+        for nxt in edges[node]:
+            indegree[nxt] -= 1
+            if indegree[nxt] == 0:
+                queue.append(nxt)
+    if seen != len(by_id):
+        _fail("workflow step dependency graph contains a cycle")
+
+
+def _validate_parallel(definition: WorkflowDefinition) -> None:
+    """Validate parallel blocks against the graph (bounded, fail closed)."""
+    by_id = _step_ids(definition)
+    step_to_block: dict[str, WorkflowParallelBlock] = {}
+    for block in definition.parallel:
+        for sid in block.steps:
+            # A step can only live in one block (checked in model validator too).
+            if sid in step_to_block:
+                _fail(f"step {sid!r} appears in more than one parallel block")
+            step_to_block[sid] = block
+        for dep in block.depends_on:
+            if dep not in by_id:
+                _fail(f"parallel block depends on unknown step {dep!r}")
+
+    for sid, block in step_to_block.items():
+        step = by_id[sid]
+        # Reject a dependency on a parallel sibling's conditional outcome: a
+        # sibling's condition may divide the branch, so a sibling dependency
+        # inside the same block is not deterministic.
+        for dep in step.depends_on + list(block.depends_on):
+            if dep in block.steps:
+                _fail(f"step {sid!r} depends on a parallel sibling's conditional "
+                      "outcome inside the same block")
+        # A condition inside a parallel block must reference a completed
+        # predecessor outside the block, never a sibling.
+        if step.condition is not None and step.condition.step_id in block.steps:
+            _fail(f"parallel step {sid!r} condition cannot reference a sibling")
+
+
 def validate_workflow_definition(
     definition: WorkflowDefinition,
     catalog: ActionCatalog,
@@ -377,6 +548,9 @@ def validate_workflow_definition(
         except Exception as exc:  # noqa: BLE001 - fail closed on any schema error
             _fail(f"step {step.id!r} params could not be validated: {exc}")
 
+    # Phase 4D graph validation (cycles, unknown deps, bounded fan-out).
+    _validate_dag(definition)
+    _validate_parallel(definition)
     return definition
 
 
@@ -442,13 +616,16 @@ def is_mutating(definition: WorkflowDefinition) -> bool:
 
 REDACTED_MARKER = REDACTED
 __all__ = [
+    "ALLOWED_CONDITION_KINDS",
     "ALLOWED_STEP_ACTIONS",
     "DEFAULT_MAX_WORKFLOW_STEPS",
     "MUTATING_STEP_ACTIONS",
     "REDACTED_MARKER",
+    "WorkflowCondition",
     "WorkflowDefinition",
     "WorkflowDefinitionError",
     "WorkflowExpect",
+    "WorkflowParallelBlock",
     "WorkflowStep",
     "WorkflowTarget",
     "is_mutating",

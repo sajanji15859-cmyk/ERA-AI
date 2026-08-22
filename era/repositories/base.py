@@ -24,8 +24,11 @@ from era.models import (
     Schedule,
     User,
     VaultSecret,
+    WorkflowGovernanceCounter,
     WorkflowRun,
+    WorkflowSchedule,
     WorkflowStepRun,
+    WorkflowTemplate,
 )
 
 
@@ -233,6 +236,32 @@ class WorkflowRunRepo(Protocol):
 
     def list_runs_by_actor(self, session, actor_id: str, *, limit: int = 50) -> list[WorkflowRun]: ...
 
+    def list_runs_filtered(
+        self,
+        session,
+        *,
+        actor_id: str | None = None,
+        status: str | None = None,
+        workflow_name: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[WorkflowRun]: ...
+
+    def count_runs_filtered(
+        self,
+        session,
+        *,
+        actor_id: str | None = None,
+        status: str | None = None,
+        workflow_name: str | None = None,
+        start_at: str | None = None,
+        end_at: str | None = None,
+    ) -> int: ...
+
+    def list_awaiting_runs(
+        self, session, *, statuses: list[str] | None = None, limit: int = 50
+    ) -> list[WorkflowRun]: ...
+
     def create_step(self, session, step: WorkflowStepRun) -> WorkflowStepRun: ...
 
     def get_step(self, session, step_id: str) -> WorkflowStepRun | None: ...
@@ -240,3 +269,56 @@ class WorkflowRunRepo(Protocol):
     def list_steps(self, session, run_id: str) -> list[WorkflowStepRun]: ...
 
     def update_step(self, session, step: WorkflowStepRun) -> WorkflowStepRun: ...
+
+
+class WorkflowScheduleRepo(Protocol):
+    """Workflow-schedule storage (Phase 4D)."""
+
+    def create(self, session, schedule: WorkflowSchedule) -> WorkflowSchedule: ...
+
+    def get(self, session, schedule_id: str) -> WorkflowSchedule | None: ...
+
+    def update(self, session, schedule: WorkflowSchedule) -> WorkflowSchedule: ...
+
+    def delete(self, session, schedule: WorkflowSchedule) -> bool: ...
+
+    def list_by_actor(self, session, actor_id: str, *, limit: int = 50) -> list[WorkflowSchedule]: ...
+
+    def list_due(self, session, now_iso: str, *, limit: int = 100) -> list[WorkflowSchedule]: ...
+
+    def get_by_name(self, session, actor_id: str, name: str) -> WorkflowSchedule | None: ...
+
+
+class WorkflowTemplateRepo(Protocol):
+    """Published immutable workflow-template version storage."""
+
+    def create(self, session, template: WorkflowTemplate) -> WorkflowTemplate: ...
+
+    def get_latest(self, session, name: str) -> WorkflowTemplate | None: ...
+
+    def get(self, session, name: str, version: int) -> WorkflowTemplate | None: ...
+
+    def list(self, session, *, limit: int = 100) -> list[WorkflowTemplate]: ...
+
+
+class WorkflowGovernanceRepo(Protocol):
+    """Atomic admission/budget counters (Phase 4D)."""
+
+    def get(self, session, kind: str, scope: str) -> WorkflowGovernanceCounter | None: ...
+
+    def bump(
+        self,
+        session,
+        *,
+        kind: str,
+        scope: str,
+        delta: int = 1,
+        cap: int | None = None,
+    ) -> tuple[int, bool]:
+        """Atomically add ``delta`` to the counter if it would not exceed ``cap``.
+
+        Returns ``(resulting_count, incremented)``. When the increment is not
+        allowed by ``cap``, ``incremented`` is False and the count is unchanged.
+        """
+
+    def reset(self, session, kind: str, scope: str) -> None: ...

@@ -1,4 +1,4 @@
-"""Durable workflow run state (Phase 4C).
+"""Durable workflow run state (Phase 4C + 4D).
 
 These rows let a paused or process-interrupted workflow be resumed from the
 last durable checkpoint. They NEVER persist raw ``element_ref`` values,
@@ -11,11 +11,15 @@ Exactly-once: a ``run_token`` is unique per actor; a mutating step's outcome is
 recorded in ``workflow_step_run`` and never re-executed on resume. A step whose
 outcome is uncertain (``SIDE_EFFECT_UNKNOWN``) leaves the run in ``ambiguous``
 and requires explicit operator resolution.
+
+Phase 4D adds the operations/governance columns (template version, DAG/parallel
+step metadata, governance state). All new columns are additive and backward
+compatible with the Phase 4C schema.
 """
 
 from __future__ import annotations
 
-from sqlalchemy import JSON, Column, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import JSON, Boolean, Column, ForeignKey, Integer, String, UniqueConstraint
 
 from era.core.util import utcnow_iso
 from era.models.base import Base
@@ -28,6 +32,9 @@ STATUS_COMPLETED = "completed"
 STATUS_FAILED = "failed"
 STATUS_AMBIGUOUS = "ambiguous"
 STATUS_CANCELLED = "cancelled"
+
+#: A run can never exceed this many steps per definition (guard for parallel).
+DEFAULT_MAX_PARALLEL_FANOUT = 8
 
 
 class WorkflowRun(Base):
@@ -58,6 +65,25 @@ class WorkflowRun(Base):
     created_at = Column(String, nullable=False, default=utcnow_iso)
     updated_at = Column(String, nullable=False, default=utcnow_iso)
 
+    # --- Phase 4D operations / governance -----------------------------------
+    #: Immutable template identity used when the run was started, if any.
+    template_name = Column(String, nullable=True)
+    template_version = Column(Integer, nullable=True)
+    template_checksum = Column(String, nullable=True)
+    started_at = Column(String, nullable=True)
+    finished_at = Column(String, nullable=True)
+    #: Episode / plan / parent run attribution (nullable, display only).
+    source = Column(String, nullable=True)
+    #: Durable DAG/parallel execution graph snapshot (redacted JSON).
+    step_graph = Column(JSON, nullable=True)
+    #: Maximum parallel steps actually dispatched for this run.
+    parallel_cap = Column(Integer, nullable=True)
+    #: Machine-readable governance denial if the run failed at admission.
+    governance_code = Column(String, nullable=True)
+    #: True when the run was submitted by a WorkflowSchedule (not interactive).
+    scheduled = Column(Boolean, nullable=False, default=False)
+    schedule_id = Column(String, nullable=True)
+
 
 class WorkflowStepRun(Base):
     __tablename__ = "workflow_step_run"
@@ -78,3 +104,23 @@ class WorkflowStepRun(Base):
     error_message = Column(String, nullable=True)
     started_at = Column(String, nullable=True)
     finished_at = Column(String, nullable=True)
+
+    # --- Phase 4D DAG / parallel metadata ------------------------------------
+    depends_on = Column(JSON, nullable=True, default=list)
+    condition = Column(JSON, nullable=True)
+    parallel_group = Column(String, nullable=True)
+    parallel_index = Column(Integer, nullable=True)
+
+
+__all__ = [
+    "DEFAULT_MAX_PARALLEL_FANOUT",
+    "STATUS_AMBIGUOUS",
+    "STATUS_CANCELLED",
+    "STATUS_COMPLETED",
+    "STATUS_FAILED",
+    "STATUS_PENDING",
+    "STATUS_RUNNING",
+    "STATUS_WAITING",
+    "WorkflowRun",
+    "WorkflowStepRun",
+]

@@ -36,6 +36,11 @@ from era.services.permission_engine import PermissionEngine
 from era.services.policy import PolicyService
 from era.services.schedules import ScheduleService
 from era.services.vault_service import VaultService
+from era.services.workflow_ops_service import (
+    WorkflowGovernanceService,
+    WorkflowScheduleService,
+    WorkflowTemplateService,
+)
 from era.services.workflow_service import WorkflowService
 from era.workflows.catalog import WorkflowCatalog, build_default_catalog
 
@@ -68,6 +73,10 @@ class Container:
     #: Phase 4C: registered workflow catalog + durable workflow engine.
     workflow_catalog: WorkflowCatalog
     workflow_service: WorkflowService
+    #: Phase 4D: workflow operations/governance.
+    workflow_schedule_service: WorkflowScheduleService
+    workflow_template_service: WorkflowTemplateService
+    workflow_governance_service: WorkflowGovernanceService
     #: Phase 3A: agent run lifecycle. ``None`` unless the agent runtime wired
     #: it (``build_agent_container``) — the default container stays unchanged.
     agent_service: AgentService | None = None
@@ -175,21 +184,31 @@ def build_container(settings: Settings | None = None,
     )
     job_service.recover()
 
-    schedule_service = ScheduleService(
-        session_factory=session_factory,
-        schedule_repo=repositories.schedule,
-        job_service=job_service,
-        catalog=catalog,
-        settings=settings,
-    )
-    if settings.scheduler_enabled:
-        schedule_service.start(interval_seconds=settings.scheduler_interval_seconds)
-
     # Phase 4C: registered workflow catalog (with reference workflows) + the
     # durable workflow engine. The engine only dispatches through the
     # execution service, so every inner step keeps its own permission,
     # confirmation, audit and reliability gates.
     workflow_catalog = build_default_catalog(catalog)
+
+    # Phase 4D: governance + immutable template store + workflow schedules.
+    workflow_governance_service = WorkflowGovernanceService(
+        session_factory=session_factory,
+        repo=repositories.workflow_governance,
+        settings=settings,
+    )
+    workflow_template_service = WorkflowTemplateService(
+        session_factory=session_factory,
+        repo=repositories.workflow_template,
+        workflow_catalog=workflow_catalog,
+        settings=settings,
+    )
+    # Reference workflows become published templates (version 1) at startup,
+    # idempotently — publishing is skipped if a version already exists.
+    from era.workflows.reference import REFERENCE_WORKFLOWS
+    for ref in REFERENCE_WORKFLOWS:
+        if workflow_template_service.get_latest(ref.name) is None:
+            workflow_template_service.publish(ref, created_by="system")
+
     workflow_service = WorkflowService(
         session_factory=session_factory,
         catalog=catalog,
@@ -200,7 +219,29 @@ def build_container(settings: Settings | None = None,
         audit_service=audit_service,
         idempotency_service=idempotency_service,
         settings=settings,
+        governance_service=workflow_governance_service,
+        template_service=workflow_template_service,
     )
+
+    workflow_schedule_service = WorkflowScheduleService(
+        session_factory=session_factory,
+        repo=repositories.workflow_schedule,
+        workflow_service=workflow_service,
+        workflow_catalog=workflow_catalog,
+        settings=settings,
+        template_service=workflow_template_service,
+    )
+
+    schedule_service = ScheduleService(
+        session_factory=session_factory,
+        schedule_repo=repositories.schedule,
+        job_service=job_service,
+        catalog=catalog,
+        settings=settings,
+        workflow_schedule_service=workflow_schedule_service,
+    )
+    if settings.scheduler_enabled:
+        schedule_service.start(interval_seconds=settings.scheduler_interval_seconds)
 
     policy_service.bootstrap()
     auth_service.bootstrap_admin()
@@ -226,4 +267,7 @@ def build_container(settings: Settings | None = None,
         schedule_service=schedule_service,
         workflow_catalog=workflow_catalog,
         workflow_service=workflow_service,
+        workflow_schedule_service=workflow_schedule_service,
+        workflow_template_service=workflow_template_service,
+        workflow_governance_service=workflow_governance_service,
     )

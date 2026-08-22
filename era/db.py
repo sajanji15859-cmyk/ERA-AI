@@ -41,6 +41,10 @@ def _enable_sqlite_pragmas(engine: Engine) -> None:
         cur = dbapi_conn.cursor()
         cur.execute("PRAGMA journal_mode=WAL;")
         cur.execute("PRAGMA foreign_keys=ON;")
+        # Phase 4D parallel workflow steps may write from multiple threads.
+        # A bounded busy timeout makes SQLite wait for the single writer instead
+        # of raising a transient "database is locked" error.
+        cur.execute("PRAGMA busy_timeout=5000;")
         cur.close()
 
 

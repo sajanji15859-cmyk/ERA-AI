@@ -88,6 +88,14 @@ class WorkflowRunOut(BaseModel):
     updated_at: str = utcnow_iso()
     steps: list[WorkflowStepOut] = Field(default_factory=list)
     definition_checksum: str
+    # Phase 4D operational fields.
+    template_name: str | None = None
+    template_version: int | None = None
+    scheduled: bool = False
+    schedule_id: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    governance_code: str | None = None
 
 
 def run_to_out(run, steps) -> WorkflowRunOut:
@@ -102,6 +110,13 @@ def run_to_out(run, steps) -> WorkflowRunOut:
         created_at=run.created_at,
         updated_at=run.updated_at,
         definition_checksum=run.definition_checksum,
+        template_name=run.template_name,
+        template_version=run.template_version,
+        scheduled=bool(getattr(run, "scheduled", False)),
+        schedule_id=run.schedule_id,
+        started_at=run.started_at,
+        finished_at=run.finished_at,
+        governance_code=run.governance_code,
         steps=[
             WorkflowStepOut(
                 step_id=s.step_id,

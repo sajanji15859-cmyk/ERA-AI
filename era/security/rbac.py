@@ -48,6 +48,14 @@ class Permission:
     #: Phase 3H: manage recurring/scheduled jobs (create / update / delete / toggle).
     SCHEDULES_MANAGE = "schedules.manage"
     SCHEDULES_READ = "schedules.read"
+    #: Phase 4D: schedule workflows (create/update/delete/toggle).
+    WORKFLOW_SCHEDULE = "workflow.schedule"
+    #: Phase 4D: manage workflow templates (publish / list).
+    WORKFLOW_TEMPLATES_MANAGE = "workflow.templates.manage"
+    #: Phase 4D: operator review surface (awaiting runs, timeline, cross-actor resolve).
+    WORKFLOW_REVIEW = "workflow.review"
+    #: Phase 4D: read workflows / templates / aggregation. Owner scope for runs.
+    WORKFLOW_READ = "workflow.read"
 
 
 ALL_PERMISSIONS: frozenset[str] = frozenset({
@@ -65,6 +73,10 @@ ALL_PERMISSIONS: frozenset[str] = frozenset({
     Permission.JOBS_READ,
     Permission.SCHEDULES_MANAGE,
     Permission.SCHEDULES_READ,
+    Permission.WORKFLOW_SCHEDULE,
+    Permission.WORKFLOW_TEMPLATES_MANAGE,
+    Permission.WORKFLOW_REVIEW,
+    Permission.WORKFLOW_READ,
 })
 
 ROLE_PERMISSIONS: dict[Role, frozenset[str]] = {
@@ -79,6 +91,8 @@ ROLE_PERMISSIONS: dict[Role, frozenset[str]] = {
         Permission.JOBS_READ,
         Permission.SCHEDULES_MANAGE,
         Permission.SCHEDULES_READ,
+        Permission.WORKFLOW_SCHEDULE,
+        Permission.WORKFLOW_READ,
     }),
 }
 

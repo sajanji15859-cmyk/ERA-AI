@@ -19,7 +19,10 @@ from era.repositories.base import (
     ScheduleRepo,
     UserRepo,
     VaultSecretRepo,
+    WorkflowGovernanceRepo,
     WorkflowRunRepo,
+    WorkflowScheduleRepo,
+    WorkflowTemplateRepo,
 )
 from era.security.signing import AuditSigner
 
@@ -41,6 +44,9 @@ class RepositoryBundle:
     job: JobRepo
     schedule: ScheduleRepo
     workflow: WorkflowRunRepo
+    workflow_schedule: WorkflowScheduleRepo
+    workflow_template: WorkflowTemplateRepo
+    workflow_governance: WorkflowGovernanceRepo
     backend: str
 
 
@@ -66,7 +72,10 @@ def build_repositories(
             SQLiteScheduleRepo,
             SQLiteUserRepo,
             SQLiteVaultRepo,
+            SQLiteWorkflowGovernanceRepo,
             SQLiteWorkflowRunRepo,
+            SQLiteWorkflowScheduleRepo,
+            SQLiteWorkflowTemplateRepo,
         )
 
         return RepositoryBundle(
@@ -83,6 +92,9 @@ def build_repositories(
             job=SQLiteJobRepo(),
             schedule=SQLiteScheduleRepo(),
             workflow=SQLiteWorkflowRunRepo(),
+            workflow_schedule=SQLiteWorkflowScheduleRepo(),
+            workflow_template=SQLiteWorkflowTemplateRepo(),
+            workflow_governance=SQLiteWorkflowGovernanceRepo(),
             backend="sqlite",
         )
     if backend == "postgresql":
@@ -99,7 +111,10 @@ def build_repositories(
             PostgresScheduleRepo,
             PostgresUserRepo,
             PostgresVaultRepo,
+            PostgresWorkflowGovernanceRepo,
             PostgresWorkflowRunRepo,
+            PostgresWorkflowScheduleRepo,
+            PostgresWorkflowTemplateRepo,
         )
 
         return RepositoryBundle(
@@ -116,6 +131,9 @@ def build_repositories(
             job=PostgresJobRepo(),
             schedule=PostgresScheduleRepo(),
             workflow=PostgresWorkflowRunRepo(),
+            workflow_schedule=PostgresWorkflowScheduleRepo(),
+            workflow_template=PostgresWorkflowTemplateRepo(),
+            workflow_governance=PostgresWorkflowGovernanceRepo(),
             backend="postgresql",
         )
     raise ValueError(

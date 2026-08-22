@@ -40,12 +40,14 @@ logger = logging.getLogger(__name__)
 
 class ScheduleService:
     def __init__(self, *, session_factory, schedule_repo: ScheduleRepo,
-                 job_service: JobService, catalog: ActionCatalog, settings):
+                 job_service: JobService, catalog: ActionCatalog, settings,
+                 workflow_schedule_service=None):
         self.session_factory = session_factory
         self.repo = schedule_repo
         self.job_service = job_service
         self.catalog = catalog
         self.settings = settings
+        self.workflow_schedule_service = workflow_schedule_service
         self._stop_event = threading.Event()
         self._worker_thread: threading.Thread | None = None
 
@@ -222,5 +224,14 @@ class ScheduleService:
                     refreshed.next_run_at = next_iso
                     refreshed.updated_at = utcnow_iso()
                     self.repo.update(session, refreshed)
+
+        # Phase 4D: workflow schedules share the same scheduler tick (reusing the
+        # Phase 3H in-process scheduler), but start through WorkflowService.
+        if self.workflow_schedule_service is not None:
+            try:
+                run_ids = self.workflow_schedule_service.tick(current_iso)
+                job_ids.extend(run_ids)
+            except Exception:
+                logger.exception("error ticking workflow schedules")
 
         return job_ids
