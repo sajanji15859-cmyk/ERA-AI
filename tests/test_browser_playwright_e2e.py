@@ -11,6 +11,7 @@ authoritative green check.  A skipped test is never reported as a pass.
 
 from __future__ import annotations
 
+import json
 import os
 
 import pytest
@@ -28,10 +29,39 @@ pytestmark = pytest.mark.browser
 _SKIP_REASON = "set ERA_TEST_BROWSER=1 for real Chromium E2E"
 
 
+def _e2e_provider_kwargs() -> dict:
+    """Read optional Chromium launch configuration from the environment.
+
+    ``ERA_BROWSER_EXECUTABLE_PATH`` points Playwright at an explicit Chromium
+    binary (e.g. a bundled/system build) instead of the Playwright-managed one.
+    ``ERA_BROWSER_EXTRA_ARGS`` is a JSON array of extra launch args (used for a
+    sandbox-proxied TLS/CAC environment, e.g. ``--no-sandbox`` /
+    ``--ignore-certificate-errors``). Both are empty by default so the standard
+    Playwright-managed Chromium with production args is used.
+    """
+    kwargs: dict = {}
+    exe = os.getenv("ERA_BROWSER_EXECUTABLE_PATH")
+    if exe:
+        kwargs["executable_path"] = exe
+    extra = os.getenv("ERA_BROWSER_EXTRA_ARGS")
+    if extra:
+        try:
+            kwargs["extra_args"] = json.loads(extra)
+        except json.JSONDecodeError:
+            raise ValueError("ERA_BROWSER_EXTRA_ARGS must be a JSON array") from None
+    return kwargs
+
+
+def _e2e_provider(tmp_path, **overrides) -> BrowserProvider:
+    kwargs = {"workspace_root": tmp_path, "timeout_seconds": 20,
+              **_e2e_provider_kwargs(), **overrides}
+    return BrowserProvider(**kwargs)
+
+
 @pytest.mark.skipif(os.getenv("ERA_TEST_BROWSER") != "1", reason=_SKIP_REASON)
 def test_real_chromium_navigation_dom_and_screenshot(tmp_path):
     url = os.getenv("ERA_TEST_BROWSER_URL", "https://example.com")
-    provider = BrowserProvider(workspace_root=tmp_path, timeout_seconds=20)
+    provider = _e2e_provider(tmp_path)
     ctx = ExecutionContext(
         actor_id="browser-e2e", session_id="e2e", execution_scope="e2e:one",
     )
@@ -65,7 +95,7 @@ def test_real_chromium_inspect_and_element_ref_workflow(tmp_path):
     receipt.  No selectors are invented anywhere.
     """
     url = os.getenv("ERA_TEST_BROWSER_URL", "https://example.com")
-    provider = BrowserProvider(workspace_root=tmp_path, timeout_seconds=20)
+    provider = _e2e_provider(tmp_path)
     ctx = ExecutionContext(
         actor_id="browser-e2e", session_id="e2e", execution_scope="e2e:ref",
     )
@@ -133,7 +163,7 @@ def test_real_chromium_workflow_engine(tmp_path):
     url = os.getenv("ERA_TEST_BROWSER_URL", "https://example.com")
     container = build_container(
         Settings(database_url=f"sqlite:///{tmp_path}/wf-e2e.db"),
-        providers=[BrowserProvider(workspace_root=tmp_path, timeout_seconds=20)],
+        providers=[_e2e_provider(tmp_path)],
     )
     try:
         user = container.auth_service.create_user(username="wfe2e", role="user")

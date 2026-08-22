@@ -979,9 +979,17 @@ an API response, agent observation, idempotency row or job row:
 ERA_BROWSER_MAX_CONTEXTS=32
 ERA_BROWSER_CONTEXT_IDLE_SECONDS=300.0
 ERA_BROWSER_COMMAND_QUEUE_SIZE=128
+ERA_BROWSER_EXECUTABLE_PATH=
+ERA_BROWSER_EXTRA_ARGS=[]
 ERA_BROWSER_PROXY_SERVER=
 ERA_PROVIDER_RESULT_MAX_BYTES=524288
 ```
+
+`ERA_BROWSER_EXECUTABLE_PATH` (optional) points Playwright at an explicit
+Chromium binary (e.g. a bundled/system build) instead of the Playwright-managed
+one — useful on restricted networks where the Playwright CDN is unreachable.
+`ERA_BROWSER_EXTRA_ARGS` (optional) is a JSON array of extra Chromium launch
+args (empty by default, so production defaults are unchanged).
 
 Production deployments should set `ERA_BROWSER_PROXY_SERVER` to a
 credential-free, default-deny egress proxy and enforce private/metadata network
@@ -1122,10 +1130,27 @@ The Phase 4B suite is deterministic and offline (simulated transport) and adds
 inspect → element_ref → click → stale-ref workflow:
 
 ```bash
-pytest                                   # 732 passed, 3 optional skips, 735 collected
+pytest                                   # offline: 767 passed, 4 optional skips
 ruff check .                             # clean
 ERA_TEST_BROWSER=1 pytest -m browser tests/test_browser_playwright_e2e.py
 ```
+
+In an environment with a non-standard Chromium path or a sandbox-proxied
+TLS/CAC network, configure the browser explicitly (see the browser config
+section above):
+
+```bash
+ERA_BROWSER_EXECUTABLE_PATH=/path/to/chromium \
+ERA_BROWSER_EXTRA_ARGS='["--no-sandbox","--disable-dev-shm-usage","--ignore-certificate-errors"]' \
+LD_LIBRARY_PATH=/path/to/browser-libs \
+ERA_TEST_BROWSER=1 \
+ERA_TEST_BROWSER_URL=https://<reachable-public-host> \
+pytest -m browser tests/test_browser_playwright_e2e.py
+```
+
+With Chromium installed and network available the 3 opt-in real-Chromium E2E
+tests run and pass; without it they are skipped with the exact reason
+(`set ERA_TEST_BROWSER=1 for real Chromium E2E`) — never counted as passed.
 
 Skipped E2E tests are reported as skipped with the exact reason
 (`set ERA_TEST_BROWSER=1 for real Chromium E2E`) — never as passes.
@@ -1291,7 +1316,10 @@ ERA_TEST_BROWSER=1 pytest -m browser tests/test_browser_playwright_e2e.py
 ```
 
 The opt-in real-Chromium E2E now also runs a workflow through the engine on a
-public page; without `ERA_TEST_BROWSER=1` it is skipped with an explicit reason.
+public page; with Chromium configured it runs and passes, and without
+`ERA_TEST_BROWSER=1` it is skipped with an explicit reason. Full-suite result
+with the real-Chromium E2E enabled: **770 passed, 1 skipped** (the single skip
+is the opt-in live-PostgreSQL integration test).
 
 ### Remaining limitations
 

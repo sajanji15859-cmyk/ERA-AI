@@ -1399,7 +1399,9 @@ class PlaywrightBrowserTransport:
                  context_idle_seconds: float = DEFAULT_CONTEXT_IDLE_SECONDS,
                  command_queue_size: int = DEFAULT_COMMAND_QUEUE_SIZE,
                  proxy_server: str = "",
-                 element_ref_ttl_seconds: float = DEFAULT_ELEMENT_REF_TTL_SECONDS):
+                 element_ref_ttl_seconds: float = DEFAULT_ELEMENT_REF_TTL_SECONDS,
+                 executable_path: str = "",
+                 extra_args: list[str] | None = None):
         if int(max_contexts) < 1:
             raise ValueError("browser max_contexts must be positive")
         if float(context_idle_seconds) <= 0:
@@ -1420,6 +1422,8 @@ class PlaywrightBrowserTransport:
         self.max_contexts = int(max_contexts)
         self.context_idle_seconds = float(context_idle_seconds)
         self.proxy_server = proxy_server
+        self.executable_path = executable_path
+        self.extra_args = list(extra_args or [])
         self.refs = ElementReferenceRegistry(element_ref_ttl_seconds)
         self._commands: queue.Queue[_BrowserCommand | None] = queue.Queue(
             maxsize=int(command_queue_size),
@@ -1613,13 +1617,20 @@ class PlaywrightBrowserTransport:
                 provider_id="browser", code=ProviderErrorCode.NOT_IMPLEMENTED,
             ) from exc
         self._playwright = sync_playwright().start()
+        args = [
+            "--disable-quic",
+            "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+        ]
+        # Append operator-configured extra args (e.g. for a sandbox-proxied TLS
+        # environment). Opt-in via settings only; production defaults unchanged.
+        args.extend(self.extra_args)
         launch_options: dict[str, Any] = {
             "headless": self.headless,
-            "args": [
-                "--disable-quic",
-                "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
-            ],
+            "args": args,
         }
+        # Explicit Chromium executable path (opt-in). Empty -> Playwright-managed.
+        if self.executable_path:
+            launch_options["executable_path"] = self.executable_path
         if self.proxy_server:
             launch_options["proxy"] = {"server": self.proxy_server}
         self._browser = self._playwright.chromium.launch(**launch_options)
@@ -2299,7 +2310,9 @@ class BrowserProvider:
                  secret_resolver: Any | None = None,
                  element_ref_ttl_seconds: float = DEFAULT_ELEMENT_REF_TTL_SECONDS,
                  max_download_bytes: int = DEFAULT_MAX_DOWNLOAD_BYTES,
-                 max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES):
+                 max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES,
+                 executable_path: str = "",
+                 extra_args: list[str] | None = None):
         if float(timeout_seconds) <= 0:
             raise ValueError("browser timeout_seconds must be positive")
         if int(viewport_width) <= 0 or int(viewport_height) <= 0:
@@ -2320,6 +2333,8 @@ class BrowserProvider:
         self.element_ref_ttl_seconds = float(element_ref_ttl_seconds)
         self.max_download_bytes = int(max_download_bytes)
         self.max_upload_bytes = int(max_upload_bytes)
+        self.executable_path = executable_path
+        self.extra_args = list(extra_args or [])
         self.transport = transport or PlaywrightBrowserTransport(
             headless=self.headless,
             viewport_width=self.viewport_width,
@@ -2330,6 +2345,8 @@ class BrowserProvider:
             command_queue_size=command_queue_size,
             proxy_server=proxy_server,
             element_ref_ttl_seconds=self.element_ref_ttl_seconds,
+            executable_path=self.executable_path,
+            extra_args=self.extra_args,
         )
 
     def validate(self, action: Action) -> None:

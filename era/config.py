@@ -101,6 +101,13 @@ class Settings(BaseSettings):
     browser_max_contexts: int = 32
     browser_context_idle_seconds: float = 300.0
     browser_command_queue_size: int = 128
+    #: Optional explicit Chromium executable path. Empty = use the Playwright-
+    #: managed browser (normal case). Some environments provide a system or
+    #: bundled Chromium and need Playwright pointed at it.
+    browser_executable_path: str = ""
+    #: Optional extra Chromium launch args (JSON array in env). Kept empty in
+    #: production; used e.g. for a sandbox-proxied TLS/CAC environment.
+    browser_extra_args: list[str] = []
     #: Optional mandatory-egress proxy for production browser workers. Keep
     #: credentials outside this URL and configure them at the proxy boundary.
     browser_proxy_server: str = ""
