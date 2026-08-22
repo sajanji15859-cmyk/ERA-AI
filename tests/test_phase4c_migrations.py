@@ -7,7 +7,7 @@ from sqlalchemy import inspect, text
 
 from era.db import alembic_config, make_engine, migrate_database
 
-HEAD = "0006_phase_4c_workflows"
+HEAD = "0007_phase_4d_operations"
 
 
 def _downgrade_to(engine, revision: str) -> None:

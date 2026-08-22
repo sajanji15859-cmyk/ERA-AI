@@ -34,7 +34,8 @@ class AuditService:
                confirmation_id: str | None = None, result: str | None = None,
                error_code: str | None = None,
                provider_id: str | None = None, capability_domain: str | None = None,
-               credential_ref: str | None = None) -> AuditLogEntry:
+               credential_ref: str | None = None,
+               meta: dict | None = None) -> AuditLogEntry:
         spec = self.catalog.get(action.action_type)
         secret_fields = spec.secret_fields if spec else frozenset()
         entry = NewAuditEntry(
@@ -52,6 +53,7 @@ class AuditService:
             provider_id=provider_id,
             capability_domain=capability_domain,
             credential_ref=credential_ref,
+            meta=dict(meta or {}),
         )
         return self.audit_repo.append(session, entry)
 

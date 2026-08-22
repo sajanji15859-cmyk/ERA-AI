@@ -27,7 +27,10 @@ from era.repositories.sqlite import (
     SQLiteScheduleRepo,
     SQLiteUserRepo,
     SQLiteVaultRepo,
+    SQLiteWorkflowGovernanceRepo,
     SQLiteWorkflowRunRepo,
+    SQLiteWorkflowScheduleRepo,
+    SQLiteWorkflowTemplateRepo,
 )
 from era.security.signing import AuditSigner
 
@@ -101,6 +104,18 @@ class PostgresScheduleRepo(SQLiteScheduleRepo):
 
 class PostgresWorkflowRunRepo(SQLiteWorkflowRunRepo):
     """PostgreSQL workflow run storage (Phase 4C)."""
+
+
+class PostgresWorkflowScheduleRepo(SQLiteWorkflowScheduleRepo):
+    """PostgreSQL workflow-schedule storage (Phase 4D)."""
+
+
+class PostgresWorkflowTemplateRepo(SQLiteWorkflowTemplateRepo):
+    """PostgreSQL immutable workflow-template version storage (Phase 4D)."""
+
+
+class PostgresWorkflowGovernanceRepo(SQLiteWorkflowGovernanceRepo):
+    """PostgreSQL atomic admission/budget counters (Phase 4D)."""
 
 
 class PostgresCircuitBreakerStateRepo:

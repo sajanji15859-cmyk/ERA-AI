@@ -25,6 +25,7 @@ directly invokable by routes or the agent loop.
 
 from __future__ import annotations
 
+import threading
 import time
 from dataclasses import replace
 
@@ -81,6 +82,11 @@ class ExecutionService:
         # Phase 1F reliability layer (provider-agnostic; defaults from settings).
         self.retry_policy = retry_policy or _retry_policy_from_settings(settings)
         self.circuit_breakers = circuit_breakers or _breaker_registry_from_settings(settings)
+        # Phase 4D parallel steps write to the append-only hash chain from
+        # multiple threads. Serializing the whole audit record transaction
+        # (including its commit) keeps the chain's seq/prev-hash deterministic
+        # on SQLite; provider execution itself remains concurrent.
+        self._audit_write_lock = threading.Lock()
 
     # -- public entry points --------------------------------------------------
     def request(self, action: Action, ctx: ExecutionContext) -> ExecutionResponse:
@@ -117,7 +123,8 @@ class ExecutionService:
                                             domain, provider_id, credential_ref, None)
 
     def approve(self, confirmation_id: str, action: Action, ctx: ExecutionContext,
-                challenge: str | None = None) -> ExecutionResponse:
+                challenge: str | None = None, *,
+                allow_cross_actor: bool = False) -> ExecutionResponse:
         with transaction(self.session_factory) as session:
             confirmation = self.confirmation_service.get(session, confirmation_id)
             if confirmation is None:
@@ -143,7 +150,12 @@ class ExecutionService:
 
             # Phase 2A: confirmations are actor-bound — only the initiating
             # actor may approve. A different actor is a deny (fail closed).
-            if confirmation.actor_id is not None and confirmation.actor_id != ctx.actor_id:
+            # Phase 4D: an explicit operator/review action may act on another
+            # actor's confirmation only when ``allow_cross_actor`` is set (the
+            # caller must already have the admin review permission).
+            if (not allow_cross_actor
+                    and confirmation.actor_id is not None
+                    and confirmation.actor_id != ctx.actor_id):
                 self.confirmation_service.mark_status(session, confirmation, STATUS_DENIED)
                 self.audit_service.record(
                     session, action=action, ctx=ctx,
@@ -463,7 +475,8 @@ class ExecutionService:
     def _record(self, action, ctx, risk_level, decision, outcome, policy_version,
                 domain, provider_id, credential_ref, confirmation_id=None, result=None,
                 error_code=None):
-        with transaction(self.session_factory) as session:
+        # Keep the audit append+commit serialized (no stale seq / prev-hash).
+        with self._audit_write_lock, transaction(self.session_factory) as session:
             self.audit_service.record(
                 session, action=action, ctx=ctx, risk_level=risk_level,
                 decision=decision, outcome=outcome, policy_version=policy_version,

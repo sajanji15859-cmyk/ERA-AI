@@ -134,6 +134,20 @@ class Settings(BaseSettings):
     #: Max total rendered-param characters across a workflow definition.
     workflow_max_param_chars: int = 16384
 
+    # --- Phase 4D: workflow operations & governance --------------------------
+    #: Max concurrent runs a single actor may have at once.
+    workflow_max_concurrent_per_actor: int = 2
+    #: Max concurrent runs of one workflow (any actor) at once.
+    workflow_max_concurrent_per_workflow: int = 2
+    #: Max runs of one workflow per rolling window.
+    workflow_max_runs_per_window: int = 10
+    #: Governance rate-limit window (seconds).
+    workflow_rate_window_seconds: int = 3600
+    #: Max step dispatches in a single run (step budget).
+    workflow_max_steps_per_run: int = 120
+    #: Cost/quota budget in arbitrary units per run (1 unit per dispatched step).
+    workflow_max_cost_units: int = 1000
+
     # --- Phase 3C: credential vault + provider secrets -----------------------
     #: Master key for the credential vault: 32 bytes as 64 hex chars or 44
     #: base64 chars. Env-only — never commit a real key. Empty = the vault is

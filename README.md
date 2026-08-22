@@ -1337,3 +1337,115 @@ is the opt-in live-PostgreSQL integration test).
   custom post-condition.
 - Cross-process persistent cookies/session store remain out of scope (browser
   state stays ephemeral per run, with only confirmation-pause continuity).
+
+## Phase 4D: Workflow Operations & Governance (delivered)
+
+Phase 4D adds the **operations layer** around the Phase 4C engine without
+changing its durability/resumability/exactly-once/fail-closed guarantees:
+workflows become schedulable, governed, templated, reviewable and observable.
+
+### Scheduling
+
+A workflow can be registered as a recurring schedule
+(`POST /v1/workflow-schedules`) reusing the Phase 3H cron/interval machinery.
+A due schedule is started through the **same** `WorkflowService` gates as an
+interactive run, so it is never a confirmation bypass (a scheduled login that
+needs confirmation pauses exactly like an interactive run).
+
+- Deterministic run token `sched:<actor>:<schedule_id>:<due_time>` gives
+  crash/double-due exactly-once dedup.
+- Schedules store redacted params and the actor role; registration rejects a
+  schedule whose inner steps the role may not run.
+
+### Parallel & conditional steps (bounded DAG)
+
+Workflow definitions may declare `depends_on`, `parallel` blocks with
+`max_concurrency` (default 1 = today's sequential behavior), and a pure,
+schema-constrained `condition` predicate (`step_result`, `url_contains`,
+`element_present`) over prior step receipts — never arbitrary code and never
+raw page text. Validation rejects cycles, unknown deps, parallel-sibling
+conditional dependencies, unbounded fan-out and non-allowed predicates. Each
+step still goes through `ExecutionService` independently.
+
+### Governance
+
+A deterministic governance layer constrains execution globally and per
+actor/workflow (concurrency caps, per-window rate, step/cost budgets) before a
+run starts and re-checks during long runs. A cap breach starts the run as
+`FAILED` with a machine-readable `governance_code` (`CONCURRENCY_EXCEEDED`,
+`RATE_LIMIT_EXCEEDED`, `BUDGET_EXCEEDED`) and is audited.
+
+### Templates & versioning
+
+`workflow_template` stores immutable, versioned, params-schema-validated
+definitions. `login`, `search_and_extract` and `download_report` are published
+as version 1 templates. A run pins the exact template+version+checksum; a later
+version bump never silently changes an in-flight run (checksum drift fails
+closed).
+
+### Operator review
+
+Admin-only endpoints list runs awaiting attention, expose an ordered timeline,
+and allow cross-actor resolve/cancel/approve with a clear audit trail. No
+operator surface exposes plaintext values, refs, cookies, headers or page
+content.
+
+### Observability
+
+Bounded, actor-scoped filtering and aggregation:
+`GET /v1/workflows/summary?status=&workflow=`,
+`GET /v1/workflows/aggregate?workflow=&start_at=&end_at=` and
+`GET /v1/workflows/{id}/timeline`.
+
+### Migration
+
+Migration `0007_phase_4d_operations` adds `workflow_schedule`,
+`workflow_template`, `workflow_governance_counter` and additive columns on
+`workflow_run` / `workflow_step_run`. It is backward compatible and the
+downgrade drops only the new tables/columns.
+
+### New endpoints
+
+```bash
+POST /v1/workflow-schedules                      # register a schedule
+GET/PATCH/DELETE /v1/workflow-schedules/{id}
+POST /v1/workflow-templates                      # publish a template version
+GET  /v1/workflow-templates
+POST /v1/workflow-templates/instantiate
+GET  /v1/workflows/awaiting                      # admin-only
+GET  /v1/workflows/summary?limit=&offset=
+GET  /v1/workflows/aggregate
+GET  /v1/workflows/{id}/timeline
+POST /v1/admin/workflows/{id}/resolve            # admin cross-actor
+POST /v1/admin/workflows/{id}/cancel             # admin cross-actor
+POST /v1/admin/confirmations/{id}/approve        # admin cross-actor
+```
+
+### Configuration
+
+```dotenv
+ERA_WORKFLOW_MAX_CONCURRENT_PER_ACTOR=2
+ERA_WORKFLOW_MAX_CONCURRENT_PER_WORKFLOW=2
+ERA_WORKFLOW_MAX_RUNS_PER_WINDOW=10
+ERA_WORKFLOW_RATE_WINDOW_SECONDS=3600
+ERA_WORKFLOW_MAX_STEPS_PER_RUN=120
+ERA_WORKFLOW_MAX_COST_UNITS=1000
+```
+
+### Tests
+
+Phase 4D adds offline/simulator coverage for scheduling (register, due,
+crash-double-due dedup, confirmation-pause, enable/disable), DAG validation and
+execution, governance caps and DB racing, template/versioning, operator review
+(timeline, sanitization, cross-actor resolve/deny), observability and RBAC,
+plus migration tests for `0007`.
+
+### Remaining limitations (Phase 4D)
+
+- True parallel *mutating* steps are bounded by `workflow_max_pending_confirmations`
+  (default 1), so mutating parallel blocks stay sequential/safe by default;
+  SAFE read steps (e.g. parallel extract) can run concurrently.
+- The scheduler runs in-process (Phase 3H reuse); a production deployment
+  should run one scheduler worker per DB.
+- Template publishing/versioning is metadata-only; no runtime template
+  delegation beyond the catalogued browser action allowlist.

@@ -6,7 +6,7 @@ from sqlalchemy import inspect, text
 
 from era.db import make_engine, migrate_database
 
-HEAD = "0006_phase_4c_workflows"
+HEAD = "0007_phase_4d_operations"
 
 
 def _confirmation_columns(engine) -> set[str]:

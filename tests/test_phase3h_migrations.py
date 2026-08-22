@@ -20,7 +20,7 @@ def test_phase3h_schedule_table_created(tmp_path):
         tables = set(inspect(connection).get_table_names())
         revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar()
 
-    assert revision == "0006_phase_4c_workflows"
+    assert revision == "0007_phase_4d_operations"
     assert "schedule" in tables
 
     cols = _columns(engine, "schedule")

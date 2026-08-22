@@ -337,10 +337,40 @@ clean; `git diff --check` clean.  The opt-in real-Chromium E2E now also runs a
 workflow through the engine on a public page; without `ERA_TEST_BROWSER=1` it
 is skipped with an explicit reason and never counted as passed.
 
+## Phase 4D — Workflow Operations & Governance (delivered)
+
+Phase 4D adds the operations layer around the Phase 4C engine:
+
+1. **Scheduling** — `workflow_schedule` reuses Phase 3H cron/interval
+   machinery; due runs are started through the same WorkflowService gates with a
+   deterministic run token (crash/double-due exactly-once), so a schedule is
+   never a confirmation bypass.
+2. **Parallel & conditional steps (bounded DAG)** — `depends_on`, `parallel`
+   blocks with `max_concurrency`, and pure schema-constrained `condition`
+   predicates over prior step receipts. Validation rejects cycles, unknown deps,
+   parallel-sibling conditional deps, unbounded fan-out and non-allowed
+   predicates. Each step is individually gated.
+3. **Governance** — DB-backed concurrency caps, per-window rate limits and
+   step/cost budgets; a cap breach starts the run as `FAILED` with a
+   machine-readable `governance_code`.
+4. **Templates & versioning** — immutable published template versions with
+   `params_schema`; a run pins template+version+checksum and fails closed on
+   drift.
+5. **Operator review** — admin-only awaiting-run listing, run timelines,
+   cross-actor resolve/cancel/approve with audit trail and sanitized output.
+6. **Observability** — bounded, actor-scoped filtering and aggregation.
+7. **Migration** `0007_phase_4d_operations` (additive, backward compatible).
+
+Validation: full offline suite green; `ruff check era tests` clean;
+`git diff --check` clean. Real-Chromium E2E remains opt-in
+(`ERA_TEST_BROWSER=1 pytest -m browser`); without it the E2E tests are skipped
+with an explicit reason and not counted as passed.
+
 ### Recommended next phase
 
-**Phase 4D — Workflow Operations & Governance**: parallel/conditional workflow
-steps, scheduling long-lived workflows, per-workflow rate limits and quotas,
-workflow templates/versioning, and an operator review UI for `ambiguous` runs.
-Autonomous payments and irreversible transactions remain out of scope until a
-dedicated strong-confirmation + idempotency design is delivered.
+**Phase 4E — Strong confirmation & production hardening**: a dedicated
+strong-confirmation + idempotency design review before autonomous
+payments/irreversible transactions, multi-worker scheduler coordination, and a
+full operator review UI in the web dashboard. Cross-process persistent
+cookies/session store remains out of scope (browser state stays ephemeral per
+run with confirmation-pause continuity).

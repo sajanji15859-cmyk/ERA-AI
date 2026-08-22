@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
+import threading
+
+from sqlalchemy import func, select, text
 
 from era.core.util import utcnow_iso
 from era.models import (
@@ -18,8 +20,11 @@ from era.models import (
     Schedule,
     User,
     VaultSecret,
+    WorkflowGovernanceCounter,
     WorkflowRun,
+    WorkflowSchedule,
     WorkflowStepRun,
+    WorkflowTemplate,
 )
 from era.repositories.audit import build_audit_row, verify_audit_rows
 from era.repositories.base import NewAuditEntry, VerifyResult
@@ -27,7 +32,14 @@ from era.security.signing import AuditSigner
 
 
 class SQLiteAuditRepo:
-    """SQLite audit storage. Append-only; computes the hash chain on write."""
+    """SQLite audit storage. Append-only; computes the hash chain on write.
+
+    A process-wide lock protects the chain's ``seq``/prev-hash read+compute
+    against concurrent parallel workflow steps (Phase 4D). The lock only
+    serializes append bookkeeping; executions themselves stay concurrent.
+    """
+
+    _append_lock = threading.Lock()
 
     def __init__(self, genesis_hash: str, signer: AuditSigner | None = None):
         self.genesis_hash = genesis_hash
@@ -35,15 +47,16 @@ class SQLiteAuditRepo:
 
     # -- write ----------------------------------------------------------------
     def append(self, session, entry: NewAuditEntry) -> AuditLogEntry:
-        last = self.get_last(session)
-        row = build_audit_row(
-            entry,
-            seq=(last.seq + 1) if last else 1,
-            prev_hash=last.entry_hash if last else self.genesis_hash,
-            signer=self.signer,
-        )
-        session.add(row)
-        session.flush()
+        with self._append_lock:
+            last = self.get_last(session)
+            row = build_audit_row(
+                entry,
+                seq=(last.seq + 1) if last else 1,
+                prev_hash=last.entry_hash if last else self.genesis_hash,
+                signer=self.signer,
+            )
+            session.add(row)
+            session.flush()
         return row
 
     # -- read -----------------------------------------------------------------
@@ -364,6 +377,68 @@ class SQLiteWorkflowRunRepo:
                 .order_by(WorkflowRun.created_at.desc()).limit(limit))
         return list(session.execute(stmt).scalars().all())
 
+    def _filtered_stmt(
+        self,
+        *,
+        actor_id: str | None = None,
+        status: str | None = None,
+        workflow_name: str | None = None,
+        start_at: str | None = None,
+        end_at: str | None = None,
+    ):
+        stmt = select(WorkflowRun)
+        if actor_id is not None:
+            stmt = stmt.where(WorkflowRun.actor_id == actor_id)
+        if status is not None:
+            stmt = stmt.where(WorkflowRun.status == status)
+        if workflow_name is not None:
+            stmt = stmt.where(WorkflowRun.workflow_name == workflow_name)
+        if start_at is not None:
+            stmt = stmt.where(WorkflowRun.created_at >= start_at)
+        if end_at is not None:
+            stmt = stmt.where(WorkflowRun.created_at <= end_at)
+        return stmt
+
+    def list_runs_filtered(
+        self,
+        session,
+        *,
+        actor_id: str | None = None,
+        status: str | None = None,
+        workflow_name: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[WorkflowRun]:
+        stmt = (self._filtered_stmt(actor_id=actor_id, status=status,
+                                    workflow_name=workflow_name)
+                .order_by(WorkflowRun.created_at.desc())
+                .limit(limit).offset(offset))
+        return list(session.execute(stmt).scalars().all())
+
+    def count_runs_filtered(
+        self,
+        session,
+        *,
+        actor_id: str | None = None,
+        status: str | None = None,
+        workflow_name: str | None = None,
+        start_at: str | None = None,
+        end_at: str | None = None,
+    ) -> int:
+        stmt = self._filtered_stmt(actor_id=actor_id, status=status,
+                                   workflow_name=workflow_name,
+                                   start_at=start_at, end_at=end_at)
+        stmt = stmt.with_only_columns(func.count(WorkflowRun.id))
+        return int(session.execute(stmt).scalar() or 0)
+
+    def list_awaiting_runs(
+        self, session, *, statuses: list[str] | None = None, limit: int = 50
+    ) -> list[WorkflowRun]:
+        statuses = statuses or ["waiting_for_user", "ambiguous"]
+        stmt = (select(WorkflowRun).where(WorkflowRun.status.in_(statuses))
+                .order_by(WorkflowRun.updated_at.desc()).limit(limit))
+        return list(session.execute(stmt).scalars().all())
+
     def create_step(self, session, step: WorkflowStepRun) -> WorkflowStepRun:
         session.add(step)
         session.flush()
@@ -408,3 +483,152 @@ class SQLiteCircuitBreakerStateRepo:
         row.updated_at = utcnow_iso()
         session.flush()
         return row
+
+
+class SQLiteWorkflowScheduleRepo:
+    """SQLite workflow-schedule storage (Phase 4D)."""
+
+    def create(self, session, schedule: WorkflowSchedule) -> WorkflowSchedule:
+        session.add(schedule)
+        session.flush()
+        return schedule
+
+    def get(self, session, schedule_id: str) -> WorkflowSchedule | None:
+        return session.get(WorkflowSchedule, schedule_id)
+
+    def update(self, session, schedule: WorkflowSchedule) -> WorkflowSchedule:
+        session.add(schedule)
+        session.flush()
+        return schedule
+
+    def delete(self, session, schedule: WorkflowSchedule) -> bool:
+        session.delete(schedule)
+        session.flush()
+        return True
+
+    def list_by_actor(self, session, actor_id: str, *, limit: int = 50) -> list[WorkflowSchedule]:
+        stmt = (select(WorkflowSchedule)
+                .where(WorkflowSchedule.actor_id == actor_id)
+                .order_by(WorkflowSchedule.created_at.desc()).limit(limit))
+        return list(session.execute(stmt).scalars().all())
+
+    def list_due(self, session, now_iso: str, *, limit: int = 100) -> list[WorkflowSchedule]:
+        stmt = (select(WorkflowSchedule).where(
+            WorkflowSchedule.enabled.is_(True),
+            WorkflowSchedule.next_run_at.is_not(None),
+            WorkflowSchedule.next_run_at <= now_iso,
+        ).order_by(WorkflowSchedule.next_run_at.asc()).limit(limit))
+        return list(session.execute(stmt).scalars().all())
+
+    def get_by_name(self, session, actor_id: str, name: str) -> WorkflowSchedule | None:
+        stmt = select(WorkflowSchedule).where(
+            WorkflowSchedule.actor_id == actor_id,
+            WorkflowSchedule.name == name,
+        )
+        return session.execute(stmt).scalars().first()
+
+
+class SQLiteWorkflowTemplateRepo:
+    """SQLite immutable workflow-template version storage."""
+
+    def create(self, session, template: WorkflowTemplate) -> WorkflowTemplate:
+        session.add(template)
+        session.flush()
+        return template
+
+    def get_latest(self, session, name: str) -> WorkflowTemplate | None:
+        stmt = (select(WorkflowTemplate)
+                .where(WorkflowTemplate.name == name,
+                       WorkflowTemplate.status == "published")
+                .order_by(WorkflowTemplate.version.desc()).limit(1))
+        return session.execute(stmt).scalars().first()
+
+    def get(self, session, name: str, version: int) -> WorkflowTemplate | None:
+        stmt = select(WorkflowTemplate).where(
+            WorkflowTemplate.name == name,
+            WorkflowTemplate.version == version,
+        )
+        return session.execute(stmt).scalars().first()
+
+    def list(self, session, *, limit: int = 100) -> list[WorkflowTemplate]:
+        stmt = (select(WorkflowTemplate)
+                .order_by(WorkflowTemplate.name.asc(),
+                          WorkflowTemplate.version.desc()).limit(limit))
+        return list(session.execute(stmt).scalars().all())
+
+
+class SQLiteWorkflowGovernanceRepo:
+    """SQLite atomic admission/budget counters (Phase 4D).
+
+    Uses a portable ``INSERT ... ON CONFLICT ... DO UPDATE`` upsert. Because the
+    counter's ``(kind, scope)`` is unique, two worker threads that race an
+    admission guarantee serialize their updates at the row level: whichever
+    wins first increments; the loser observes ``incremented=False`` when the cap
+    has already been reached.
+    """
+
+    def get(self, session, kind: str, scope: str) -> WorkflowGovernanceCounter | None:
+        stmt = select(WorkflowGovernanceCounter).where(
+            WorkflowGovernanceCounter.kind == kind,
+            WorkflowGovernanceCounter.scope == scope,
+        )
+        return session.execute(stmt).scalars().first()
+
+    def bump(
+        self,
+        session,
+        *,
+        kind: str,
+        scope: str,
+        delta: int = 1,
+        cap: int | None = None,
+    ) -> tuple[int, bool]:
+        cap = cap if cap is not None else 2**31 - 1
+        # Atomic conditional UPDATE: only increments while the cap allows it.
+        update = text(
+            """
+            UPDATE workflow_governance_counter
+            SET count = count + :delta, updated_at = :now
+            WHERE kind = :kind AND scope = :scope AND count + :delta <= :cap
+            """
+        )
+        result = session.execute(update, {
+            "kind": kind,
+            "scope": scope,
+            "delta": delta,
+            "cap": cap,
+            "now": utcnow_iso(),
+        })
+        if result.rowcount and int(result.rowcount) > 0:
+            row = self.get(session, kind, scope)
+            return (row.count if row is not None else 0, True)
+
+        # No existing row or the cap is already reached. Try to insert when it
+        # does not yet exist and the first delta fits under the cap.
+        insert = text(
+            """
+            INSERT INTO workflow_governance_counter
+                (id, kind, scope, count, updated_at)
+            VALUES (:id, :kind, :scope, :delta, :now)
+            ON CONFLICT(kind, scope) DO NOTHING
+            """
+        )
+        inserted = session.execute(insert, {
+            "id": f"{kind}:{scope}"[:64],
+            "kind": kind,
+            "scope": scope,
+            "delta": delta,
+            "now": utcnow_iso(),
+        })
+        if inserted.rowcount and int(inserted.rowcount) > 0:
+            return delta, True
+        row = self.get(session, kind, scope)
+        return (row.count if row is not None else 0), False
+
+    def reset(self, session, kind: str, scope: str) -> None:
+        row = self.get(session, kind, scope)
+        if row is not None:
+            row.count = 0
+            row.updated_at = utcnow_iso()
+            session.add(row)
+            session.flush()
