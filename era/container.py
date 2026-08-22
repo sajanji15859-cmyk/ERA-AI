@@ -34,6 +34,7 @@ from era.services.idempotency import IdempotencyService
 from era.services.jobs import JobService
 from era.services.permission_engine import PermissionEngine
 from era.services.policy import PolicyService
+from era.services.schedules import ScheduleService
 from era.services.vault_service import VaultService
 
 
@@ -60,6 +61,8 @@ class Container:
     idempotency_service: IdempotencyService
     #: Phase 3G: durable background execution (async jobs).
     job_service: JobService
+    #: Phase 3H: scheduled and recurring jobs.
+    schedule_service: ScheduleService
     #: Phase 3A: agent run lifecycle. ``None`` unless the agent runtime wired
     #: it (``build_agent_container``) — the default container stays unchanged.
     agent_service: AgentService | None = None
@@ -167,6 +170,16 @@ def build_container(settings: Settings | None = None,
     )
     job_service.recover()
 
+    schedule_service = ScheduleService(
+        session_factory=session_factory,
+        schedule_repo=repositories.schedule,
+        job_service=job_service,
+        catalog=catalog,
+        settings=settings,
+    )
+    if settings.scheduler_enabled:
+        schedule_service.start(interval_seconds=settings.scheduler_interval_seconds)
+
     policy_service.bootstrap()
     auth_service.bootstrap_admin()
 
@@ -188,4 +201,5 @@ def build_container(settings: Settings | None = None,
         vault_service=vault_service,
         idempotency_service=idempotency_service,
         job_service=job_service,
+        schedule_service=schedule_service,
     )

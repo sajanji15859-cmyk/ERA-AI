@@ -45,6 +45,9 @@ class Permission:
     VAULT_MANAGE = "vault.manage"
     #: Phase 3G: read the caller's own background job status/results.
     JOBS_READ = "jobs.read"
+    #: Phase 3H: manage recurring/scheduled jobs (create / update / delete / toggle).
+    SCHEDULES_MANAGE = "schedules.manage"
+    SCHEDULES_READ = "schedules.read"
 
 
 ALL_PERMISSIONS: frozenset[str] = frozenset({
@@ -60,6 +63,8 @@ ALL_PERMISSIONS: frozenset[str] = frozenset({
     Permission.AGENT_RUN,
     Permission.VAULT_MANAGE,
     Permission.JOBS_READ,
+    Permission.SCHEDULES_MANAGE,
+    Permission.SCHEDULES_READ,
 })
 
 ROLE_PERMISSIONS: dict[Role, frozenset[str]] = {
@@ -72,6 +77,8 @@ ROLE_PERMISSIONS: dict[Role, frozenset[str]] = {
         Permission.ACTIONS_CONFIRM,
         Permission.AGENT_RUN,
         Permission.JOBS_READ,
+        Permission.SCHEDULES_MANAGE,
+        Permission.SCHEDULES_READ,
     }),
 }
 
@@ -90,6 +97,7 @@ ACTION_DOMAIN_ALLOWLIST: dict[Role, frozenset[str] | None] = {
         "file",
         "github",
         "code",
+        "image",
     }),
 }
 

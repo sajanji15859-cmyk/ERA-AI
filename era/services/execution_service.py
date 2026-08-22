@@ -38,6 +38,7 @@ from era.core.tool_registry import ActionCatalog, ToolRegistry
 from era.db import transaction
 from era.models.confirmation import STATUS_DENIED, STATUS_EXPIRED, STATUS_USED
 from era.schemas.actions import ExecutionResponse
+from era.security.validation import ValidationError_, validate_param_schema, validate_params
 
 
 def _retry_policy_from_settings(settings) -> RetryPolicy:
@@ -322,6 +323,24 @@ class ExecutionService:
                     ProviderErrorCode.UNAVAILABLE)
 
         # validate -----------------------------------------------------------------
+        # Phase 3H: Action-aware schema enforcement (fail closed before dispatch).
+        spec = self.catalog.get(action.action_type)
+        if spec is not None and spec.param_schema is not None:
+            try:
+                validate_param_schema(action.params, spec.param_schema)
+            except ValidationError_ as e:
+                return (Outcome.REJECTED, False, f"parameter validation failed: {e}",
+                        ProviderErrorCode.VALIDATION)
+            except Exception as e:  # noqa: BLE001
+                return (Outcome.REJECTED, False, f"parameter validation error: {e}",
+                        ProviderErrorCode.VALIDATION)
+
+        try:
+            validate_params(action.params, action_type=action.action_type)
+        except ValidationError_ as e:
+            return (Outcome.REJECTED, False, f"parameter validation failed: {e}",
+                    ProviderErrorCode.VALIDATION)
+
         # Single attempt: a validation rejection is REJECTED (bad input), never
         # retried and never fed to the circuit breaker (it is not a health
         # signal). Preserve the provider's code when it already classifies the

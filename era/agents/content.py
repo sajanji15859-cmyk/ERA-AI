@@ -15,6 +15,8 @@ from __future__ import annotations
 import html
 from typing import Any
 
+from era.agents.website_builder import generate_favicon_svg
+
 # --------------------------------------------------------------------------
 # Welding training site pack
 # --------------------------------------------------------------------------
@@ -337,7 +339,7 @@ def content_for(pack: dict[str, Any], content_key: str) -> str:
     """Resolve a ``content_from`` key to rendered content.
 
     Keys: ``<pack>:index.html`` (rendered page), ``<pack>:readme``,
-    ``<pack>:style.css``, ``<pack>:app.js``.
+    ``<pack>:style.css``, ``<pack>:app.js``, ``<pack>:favicon.svg``.
     """
     _, _, key = content_key.partition(":")
     if key in pack["pages"]:
@@ -348,4 +350,6 @@ def content_for(pack: dict[str, Any], content_key: str) -> str:
         return _CSS
     if key in ("app.js", "js"):
         return _JS
+    if key in ("favicon.svg", "favicon"):
+        return generate_favicon_svg(pack.get("site_name", "ERA"))
     raise KeyError(f"unknown content key: {content_key!r}")

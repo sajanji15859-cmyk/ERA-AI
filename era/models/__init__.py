@@ -8,11 +8,12 @@ from era.models.confirmation import PendingConfirmation
 from era.models.idempotency import IdempotencyRecord
 from era.models.job import Job
 from era.models.policy import PolicyVersion
+from era.models.schedule import Schedule
 from era.models.user import ApiKey, User
 from era.models.vault import VaultSecret
 
 __all__ = [
     "AgentRun", "ApiKey", "AuditLogEntry", "Base", "CircuitBreakerStateRow",
     "IdempotencyRecord", "Job", "MemoryEntry", "PendingConfirmation",
-    "PolicyVersion", "User", "VaultSecret",
+    "PolicyVersion", "Schedule", "User", "VaultSecret",
 ]

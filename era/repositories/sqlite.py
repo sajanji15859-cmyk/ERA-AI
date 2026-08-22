@@ -15,6 +15,7 @@ from era.models import (
     MemoryEntry,
     PendingConfirmation,
     PolicyVersion,
+    Schedule,
     User,
     VaultSecret,
 )
@@ -295,6 +296,41 @@ class SQLiteJobRepo:
 
     def list_by_statuses(self, session, statuses: list[str]) -> list[Job]:
         stmt = select(Job).where(Job.status.in_(statuses))
+        return list(session.execute(stmt).scalars().all())
+
+
+class SQLiteScheduleRepo:
+    """SQLite schedule repository (Phase 3H)."""
+
+    def create(self, session, schedule: Schedule) -> Schedule:
+        session.add(schedule)
+        session.flush()
+        return schedule
+
+    def get(self, session, schedule_id: str) -> Schedule | None:
+        return session.get(Schedule, schedule_id)
+
+    def update(self, session, schedule: Schedule) -> Schedule:
+        session.add(schedule)
+        session.flush()
+        return schedule
+
+    def delete(self, session, schedule: Schedule) -> bool:
+        session.delete(schedule)
+        session.flush()
+        return True
+
+    def list_by_actor(self, session, actor_id: str, *, limit: int = 50) -> list[Schedule]:
+        stmt = (select(Schedule).where(Schedule.actor_id == actor_id)
+                .order_by(Schedule.created_at.desc()).limit(limit))
+        return list(session.execute(stmt).scalars().all())
+
+    def list_due(self, session, now_iso: str, *, limit: int = 100) -> list[Schedule]:
+        stmt = (select(Schedule).where(
+            Schedule.enabled.is_(True),
+            Schedule.next_run_at.is_not(None),
+            Schedule.next_run_at <= now_iso,
+        ).order_by(Schedule.next_run_at.asc()).limit(limit))
         return list(session.execute(stmt).scalars().all())
 
 

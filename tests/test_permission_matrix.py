@@ -60,6 +60,7 @@ EXPECTED_RISK: dict[str, RiskLevel] = {
     "github.file_commit": RiskLevel.MUTATING,
     "code.run": RiskLevel.MUTATING,
     "code.exec": RiskLevel.MUTATING,
+    "image.generate": RiskLevel.MUTATING,
     "secret.export": RiskLevel.FORBIDDEN,
     "account.delete": RiskLevel.FORBIDDEN,
 }
@@ -101,6 +102,7 @@ EXPECTED_DOMAIN: dict[str, str] = {
     "github.file_commit": "github",
     "code.run": "code",
     "code.exec": "code",
+    "image.generate": "image",
     "secret.export": "core",
     "account.delete": "core",
 }
@@ -120,6 +122,7 @@ EXPECTED_SECRETS: dict[str, frozenset[str]] = {
     "booking.hold": frozenset({"token", "payment_token"}),
     "booking.confirm": frozenset({"token", "payment_token"}),
     "booking.cancel": frozenset({"token", "payment_token"}),
+    "image.generate": frozenset({"api_key"}),
     "fs.read": frozenset({"token"}),
     "fs.write": frozenset({"token"}),
     "fs.move": frozenset({"token"}),
