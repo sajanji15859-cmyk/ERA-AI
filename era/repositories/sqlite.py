@@ -12,6 +12,7 @@ from era.models import (
     ApiKey,
     AuditLogEntry,
     CircuitBreakerStateRow,
+    ConfirmationApproval,
     IdempotencyRecord,
     Job,
     MemoryEntry,
@@ -632,3 +633,39 @@ class SQLiteWorkflowGovernanceRepo:
             row.updated_at = utcnow_iso()
             session.add(row)
             session.flush()
+
+
+class SQLiteConfirmationApprovalRepo:
+    """SQLite dual-approval storage (Phase 4E)."""
+
+    def create(self, session, approval) -> ConfirmationApproval:
+        session.add(approval)
+        session.flush()
+        return approval
+
+    def get_by_actor(self, session, confirmation_id: str,
+                     actor_id: str) -> ConfirmationApproval | None:
+        stmt = (
+            select(ConfirmationApproval)
+            .where(ConfirmationApproval.confirmation_id == confirmation_id)
+            .where(ConfirmationApproval.actor_id == actor_id)
+        )
+        return session.execute(stmt).scalar_one_or_none()
+
+    def list_for_confirmation(self, session,
+                              confirmation_id: str) -> list[ConfirmationApproval]:
+        stmt = (
+            select(ConfirmationApproval)
+            .where(ConfirmationApproval.confirmation_id == confirmation_id)
+            .order_by(ConfirmationApproval.sequence)
+        )
+        return list(session.execute(stmt).scalars().all())
+
+    def count_granted(self, session, confirmation_id: str) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(ConfirmationApproval)
+            .where(ConfirmationApproval.confirmation_id == confirmation_id)
+            .where(ConfirmationApproval.status == "GRANTED")
+        )
+        return int(session.execute(stmt).scalar_one())

@@ -53,6 +53,12 @@
         Agent runtime disabled — set <code>ERA_AGENT_ENABLED=true</code>.
       </div>
 
+      <nav class="sidebar-nav" aria-label="Dashboard navigation">
+        <button id="nav-chat" class="nav-tab active" data-tab="chat">Chat</button>
+        <button id="nav-operator" class="nav-tab" data-tab="operator">Operator</button>
+        <button id="nav-workflows" class="nav-tab" data-tab="workflows">Workflows</button>
+      </nav>
+
       <nav class="runs-nav" aria-label="Previous runs">
         <p class="runs-nav-label">Runs</p>
         <ul id="runs-list" class="runs-list"></ul>
@@ -82,11 +88,66 @@
       <footer class="composer">
         <form id="chat-form" class="composer-form">
           <textarea id="message-input" rows="1" spellcheck="false"
-                    placeholder="Ask ERA to do something… e.g. “मेरे लिए एक welding training website बनाओ”"></textarea>
+                    placeholder="Ask ERA to do something…"></textarea>
           <button type="submit" id="send-button" class="btn btn-primary" disabled>Send</button>
         </form>
         <p class="composer-hint">Enter to send · Shift+Enter for a new line</p>
       </footer>
+
+      <!-- Phase 4E: Operator review panel -->
+      <div id="operator-panel" class="operator-panel" hidden>
+        <div class="panel-header">
+          <h2>Operator Review</h2>
+          <button id="refresh-approvals-btn" class="btn btn-ghost btn-sm">Refresh</button>
+        </div>
+
+        <section class="panel-section">
+          <h3>Pending Confirmations</h3>
+          <div id="pending-confirmations-list" class="pending-list">
+            <p class="empty-state">Loading...</p>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <h3>Health Status</h3>
+          <div id="health-status" class="health-grid">
+            <div class="health-item">
+              <span class="health-label">Database</span>
+              <span id="health-db" class="health-value">—</span>
+            </div>
+            <div class="health-item">
+              <span class="health-label">Scheduler Leader</span>
+              <span id="health-leader" class="health-value">—</span>
+            </div>
+            <div class="health-item">
+              <span class="health-label">App Version</span>
+              <span id="health-version" class="health-value">—</span>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <!-- Phase 4E: Workflows panel -->
+      <div id="workflows-panel" class="workflows-panel" hidden>
+        <div class="panel-header">
+          <h2>Workflow Runs</h2>
+          <button id="refresh-workflows-btn" class="btn btn-ghost btn-sm">Refresh</button>
+        </div>
+
+        <section class="panel-section">
+          <h3>Awaiting Operator Attention</h3>
+          <div id="awaiting-runs-list" class="pending-list">
+            <p class="empty-state">Loading...</p>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <h3>Recent Runs</h3>
+          <div id="recent-runs-list" class="recent-list">
+            <p class="empty-state">Loading...</p>
+          </div>
+        </section>
+      </div>
     </main>
   </div>
 

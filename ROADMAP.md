@@ -368,9 +368,55 @@ with an explicit reason and not counted as passed.
 
 ### Recommended next phase
 
-**Phase 4E — Strong confirmation & production hardening**: a dedicated
-strong-confirmation + idempotency design review before autonomous
-payments/irreversible transactions, multi-worker scheduler coordination, and a
-full operator review UI in the web dashboard. Cross-process persistent
-cookies/session store remains out of scope (browser state stays ephemeral per
-run with confirmation-pause continuity).
+**Phase 4E — Strong confirmation & production hardening (delivered)**: see §Phase 4E below.
+
+## Phase 4E — Strong Confirmation & Production Hardening (delivered)
+
+Phase 4E adds the production-hardening layer on top of the Phase 4A–4D browser
+and workflow engine:
+
+1. **Dual-approval for FINANCIAL / BOOKING actions** — `CONFIRM_STRONG`
+   confirmations on FINANCIAL and BOOKING risk-level actions now require two
+   distinct approvals (primary + secondary) before dispatch. The
+   `ConfirmationApproval` model tracks each approval with sequence number and
+   context hash (IP + UA fingerprint) for non-repudiation. Any single denial
+   immediately blocks dispatch. Non-FINANCIAL/BOOKING confirmations retain the
+   existing single-approval flow.
+2. **DB-backed scheduler leader election** — `SchedulerLeaderService` uses a
+   singleton row with optimistic concurrency so exactly one ERA process runs
+   scheduler ticks in a multi-worker deployment. Stale-heartbeat takeover,
+   graceful release on shutdown, and a `/v1/health` endpoint for monitoring.
+3. **Confirmation expiry sweeper** — `ConfirmationSweeper` periodically marks
+   overdue PENDING confirmations as EXPIRED (batch-bounded, idempotent).
+4. **Health endpoint** — `GET /v1/health` (public, no auth) returns database
+   status, scheduler leader info, circuit breaker aggregate and app version.
+5. **Operator review UI** — full operator dashboard in the web UI:
+   * Tab navigation (Chat / Operator / Workflows)
+   * Pending confirmations panel with approve/deny actions
+   * Health status display (DB, scheduler leader, version)
+   * Workflow runs panel (awaiting attention + recent runs)
+6. **Operator review API** — admin-only endpoints for listing pending
+   confirmations, viewing approval records, and granting/denying approvals
+   with context-hash tracking (`/v1/operator/*`).
+7. **New RBAC permission** — `operator.review` (admin-only) gates the operator
+   review endpoints.
+8. **Migration** `0008_phase_4e_production` — adds `confirmation_approval`
+   and `scheduler_leader` tables (additive, backward compatible).
+9. **Graceful shutdown** — scheduler leadership is released on SIGTERM.
+
+Validation: full offline suite green (812 passed, 4 optional skips); `ruff check
+era tests` clean; `git diff --check` clean. 24 new Phase 4E tests cover
+dual-approval, leader election, sweeper, health endpoint, operator API and
+migration. Real-Chromium E2E remains opt-in (`ERA_TEST_BROWSER=1 pytest -m
+browser`); without it the E2E tests are skipped with an explicit reason and not
+counted as passed.
+
+### Recommended next phase
+
+**Phase 5A — Real provider integration**: plug in real Web, Email (SMTP),
+WhatsApp (Meta Cloud API), Booking (partner API) and Android device providers,
+each under the existing ToolProvider SPI + ExecutionService gate, with the
+Phase 4E dual-approval and governance guards applied to their
+FINANCIAL/BOOKING/DESTRUCTIVE actions. Cross-process persistent cookies/session
+store remains out of scope (browser state stays ephemeral per run with
+confirmation-pause continuity).

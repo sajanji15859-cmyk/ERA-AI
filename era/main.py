@@ -20,7 +20,9 @@ from era.api.routes import (
     admin,
     audit,
     confirmations,
+    health,
     jobs,
+    operator,
     policy,
     providers,
     schedules,
@@ -48,6 +50,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         yield
+        # Phase 4E: release scheduler leadership on graceful shutdown.
+        if container.scheduler_leader_service is not None:
+            try:
+                container.scheduler_leader_service.release()
+            except Exception:  # noqa: BLE001, S110 — best effort on shutdown
+                pass
         # Phase 3G & 3H: stop background workers on clean shutdown.
         if container.job_service is not None:
             container.job_service.shutdown()
@@ -77,6 +85,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # on every response, including the static dashboard and SSE streams.
     app.add_middleware(SecurityHeadersMiddleware)
 
+    app.include_router(health.router)
     app.include_router(actions.router)
     app.include_router(confirmations.router)
     app.include_router(audit.router)
@@ -88,6 +97,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(schedules.router)
     app.include_router(workflow_ops.router)
     app.include_router(workflows.router)
+    app.include_router(operator.router)
     if settings.agent_enabled:
         from era.api.routes import agent
         app.include_router(agent.router)
