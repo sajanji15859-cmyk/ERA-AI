@@ -20,9 +20,11 @@ from era.agents.verifier import Verifier
 from era.config import Settings
 from era.container import Container, build_container
 from era.providers import StubProvider
+from era.providers.android_device import AndroidDeviceProvider
 from era.providers.booking import BookingProvider
 from era.providers.browser import BrowserProvider, BrowserTransport
 from era.providers.code_exec import CodeExecProvider
+from era.providers.email_imap import EmailImapProvider
 from era.providers.email_smtp import EmailSmtpProvider
 from era.providers.github import GitHubProvider
 from era.providers.image_gen import ImageGenProvider
@@ -107,14 +109,12 @@ def build_browser_provider(settings: Settings, workspace_root: Path,
     )
 
 
-def build_email_provider(settings: Settings, vault_resolver: VaultRefResolver):
-    """Build the SMTP email provider, or ``None`` when not configured.
-
-    Opt-in: only ``ERA_EMAIL_SMTP_HOST`` set. Credentials may be plain env
-    values or ``vault:`` references (resolved at send time).
-    """
+def build_email_provider(settings: Settings, vault_resolver: VaultRefResolver,
+                         workspace_root: Path | None = None):
+    """Build SMTP send, or ``None`` when the SMTP host is not configured."""
     if not (settings.email_smtp_host or "").strip():
         return None
+    workspace_root = workspace_root or Path(settings.agent_workspace_root)
     return EmailSmtpProvider(
         host=settings.email_smtp_host.strip(),
         port=int(settings.email_smtp_port),
@@ -125,6 +125,31 @@ def build_email_provider(settings: Settings, vault_resolver: VaultRefResolver):
         use_ssl=bool(settings.email_smtp_ssl),
         timeout_seconds=float(settings.email_smtp_timeout_seconds),
         secret_resolver=vault_resolver,
+        workspace_root=workspace_root,
+        max_recipients=int(settings.email_max_recipients),
+        max_body_bytes=int(settings.email_max_body_bytes),
+        max_attachments=int(settings.email_max_attachments),
+        max_attachment_bytes=int(settings.email_max_attachment_bytes),
+        max_sends_per_hour=int(settings.email_max_sends_per_hour),
+    )
+
+
+def build_imap_provider(settings: Settings, vault_resolver: VaultRefResolver):
+    """Build the read-only IMAP provider only when explicitly configured."""
+    if not (settings.email_imap_host or "").strip():
+        return None
+    # SMTP credentials are a practical secure default for operators that use
+    # one mailbox account, while explicit IMAP fields always take precedence.
+    return EmailImapProvider(
+        host=settings.email_imap_host.strip(),
+        port=int(settings.email_imap_port),
+        username=settings.email_imap_user or settings.email_smtp_user,
+        password=settings.email_imap_password or settings.email_smtp_password,
+        mailbox=settings.email_imap_mailbox,
+        timeout_seconds=float(settings.email_imap_timeout_seconds),
+        secret_resolver=vault_resolver,
+        max_messages=int(settings.email_imap_max_messages),
+        max_body_preview_bytes=int(settings.email_imap_max_body_preview_bytes),
     )
 
 
@@ -156,8 +181,9 @@ def build_code_exec_provider(settings: Settings, workspace_root: Path):
 
 
 def build_whatsapp_provider(settings: Settings, vault_resolver: VaultRefResolver):
-    """Build the Meta Cloud API WhatsApp provider (Phase 3H)."""
-    if not (settings.whatsapp_phone_number_id or settings.whatsapp_access_token):
+    """Build Meta Cloud WhatsApp only with both non-secret identifiers wired."""
+    if not ((settings.whatsapp_phone_number_id or "").strip()
+            and (settings.whatsapp_access_token or "").strip()):
         return None
     return WhatsAppProvider(
         phone_number_id=settings.whatsapp_phone_number_id,
@@ -165,6 +191,15 @@ def build_whatsapp_provider(settings: Settings, vault_resolver: VaultRefResolver
         api_url=settings.whatsapp_api_url,
         timeout_seconds=float(settings.whatsapp_timeout_seconds),
         secret_resolver=vault_resolver,
+        webhook_verify_token=settings.whatsapp_webhook_verify_token,
+        webhook_app_secret=settings.whatsapp_webhook_app_secret,
+        max_messages_per_hour=int(settings.whatsapp_max_messages_per_hour),
+        max_message_chars=int(settings.whatsapp_max_message_chars),
+        max_media_attachments=int(settings.whatsapp_max_media_attachments),
+        max_recipients_per_call=int(settings.whatsapp_max_recipients_per_call),
+        max_read_messages=int(settings.whatsapp_max_read_messages),
+        max_lookback_hours=int(settings.whatsapp_max_lookback_hours),
+        enforce_customer_window=bool(settings.whatsapp_enforce_customer_window),
     )
 
 
@@ -183,14 +218,44 @@ def build_image_gen_provider(settings: Settings, workspace_root: Path, vault_res
 
 
 def build_booking_provider(settings: Settings, vault_resolver: VaultRefResolver):
-    """Build the Travel Booking provider (Phase 3H)."""
-    if not (settings.booking_partner_api_key or settings.booking_partner_url):
+    """Build a real travel partner provider only when both settings exist."""
+    if not ((settings.booking_partner_api_key or "").strip()
+            and (settings.booking_partner_url or "").strip()):
         return None
     return BookingProvider(
         partner_api_key=settings.booking_partner_api_key,
         partner_url=settings.booking_partner_url,
         timeout_seconds=float(settings.booking_timeout_seconds),
         secret_resolver=vault_resolver,
+        max_amount_minor=int(settings.booking_max_amount_minor),
+        hold_ttl_seconds=int(settings.booking_hold_ttl_seconds),
+    )
+
+
+def build_android_device_provider(settings: Settings, workspace_root: Path,
+                                  vault_resolver: VaultRefResolver):
+    """Build paired ADB control only when an explicit device/token is present."""
+    if not ((settings.android_device_id or "").strip()
+            and (settings.android_pairing_token or "").strip()):
+        return None
+    configured_workspace = Path(settings.android_workspace_root) if settings.android_workspace_root else workspace_root
+    return AndroidDeviceProvider(
+        device_id=settings.android_device_id,
+        pairing_token=settings.android_pairing_token,
+        workspace_root=configured_workspace,
+        adb_path=settings.android_adb_path,
+        adb_host=settings.android_adb_host,
+        adb_port=int(settings.android_adb_port),
+        tls_enabled=bool(settings.android_adb_tls_enabled),
+        timeout_seconds=float(settings.android_timeout_seconds),
+        secret_resolver=vault_resolver,
+        max_shell_commands_per_minute=int(settings.android_max_shell_commands_per_minute),
+        max_screenshot_bytes=int(settings.android_max_screenshot_bytes),
+        max_contacts=int(settings.android_max_contacts),
+        max_sms_messages=int(settings.android_max_sms_messages),
+        max_notifications=int(settings.android_max_notifications),
+        max_payment_amount_minor=int(settings.android_max_payment_amount_minor),
+        safe_app_packages=list(settings.android_safe_app_packages or []),
     )
 
 
@@ -201,28 +266,44 @@ def build_agent_container(settings: Settings | None = None) -> Container:
 
     workspace = WorkspaceProvider(root=workspace_root,
                                   max_file_bytes=int(settings.workspace_max_file_bytes))
-    web = WebProvider(max_fetch_bytes=int(settings.web_max_fetch_bytes),
-                      timeout_seconds=float(settings.web_timeout_seconds),
-                      user_agent=settings.web_user_agent,
-                      workspace_root=workspace_root)
-
-    # Phase 3C, 3D, 3H & 4A: provider secrets and real providers.
+    # Shared opaque-reference adapter; attached to VaultService after the
+    # container exists. Providers retain only refs, never decrypted values.
     vault_resolver = VaultRefResolver()
+    web = WebProvider(
+        max_fetch_bytes=int(settings.web_max_fetch_bytes),
+        max_download_bytes=int(settings.browser_max_download_bytes),
+        timeout_seconds=float(settings.web_timeout_seconds),
+        user_agent=settings.web_user_agent,
+        workspace_root=workspace_root,
+        search_api_key=settings.web_search_api_key,
+        search_provider=settings.web_search_provider,
+        search_engine_id=settings.web_search_engine_id,
+        secret_resolver=vault_resolver,
+        max_fetches_per_minute=int(settings.web_max_fetches_per_minute),
+        rate_limit_window_seconds=float(settings.web_rate_limit_window_seconds),
+    )
+
+    # Phase 3C, 3D, 3H, 4A & 5A: provider secrets and real providers.
     browser = build_browser_provider(
         settings, workspace_root, secret_resolver=vault_resolver,
     )
-    email = build_email_provider(settings, vault_resolver)
+    email = build_email_provider(settings, vault_resolver, workspace_root)
+    imap = build_imap_provider(settings, vault_resolver)
     github = build_github_provider(settings, vault_resolver)
     code_exec = build_code_exec_provider(settings, workspace_root)
     whatsapp = build_whatsapp_provider(settings, vault_resolver)
     image_gen = build_image_gen_provider(settings, workspace_root, vault_resolver)
     booking = build_booking_provider(settings, vault_resolver)
+    android = build_android_device_provider(settings, workspace_root, vault_resolver)
 
     providers = [workspace, web, browser]
     claimed = workspace.action_types | web.action_types | browser.action_types
     if email is not None:
         providers.append(email)
         claimed |= email.action_types
+    if imap is not None:
+        providers.append(imap)
+        claimed |= imap.action_types
     if github is not None:
         providers.append(github)
         claimed |= github.action_types
@@ -238,6 +319,9 @@ def build_agent_container(settings: Settings | None = None) -> Container:
     if booking is not None:
         providers.append(booking)
         claimed |= booking.action_types
+    if android is not None:
+        providers.append(android)
+        claimed |= android.action_types
     providers.append(StubProvider(exclude=claimed))
 
     container = build_container(settings, providers=providers)

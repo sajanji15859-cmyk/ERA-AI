@@ -86,60 +86,84 @@ class DualApprovalService:
 
     def record_approval(self, *, confirmation_id: str, actor_id: str,
                         status: str, context_hash: str | None = None) -> ConfirmationApproval:
-        """Record an approval/denial. Raises on duplicate or invalid state."""
-        if status not in (APPROVAL_GRANTED, APPROVAL_DENIED):
-            raise DualApprovalError(f"invalid approval status: {status!r}")
+        """Record an approval/denial in its own transaction.
 
+        ``ExecutionService`` uses :meth:`record_approval_in_session` so the
+        primary approval, confirmation state transition, and audit event can be
+        committed atomically. Public operator routes keep this convenient
+        transaction-owning form.
+        """
         with transaction(self.session_factory) as session:
-            confirmation = self.confirmation_repo.get(session, confirmation_id)
-            if confirmation is None:
-                raise DualApprovalError("unknown confirmation")
-            if confirmation.status != STATUS_PENDING:
-                raise ConfirmationNotPending("confirmation is no longer pending")
-
-            # Check for duplicate by the same actor.
-            existing = self.approval_repo.get_by_actor(session, confirmation_id, actor_id)
-            if existing is not None:
-                raise ApprovalAlreadyExists(
-                    f"actor {actor_id!r} has already {existing.status.lower()} this confirmation")
-
-            # Determine sequence number.
-            existing_approvals = self.approval_repo.list_for_confirmation(
-                session, confirmation_id)
-            sequence = len(existing_approvals) + 1
-
-            approval = ConfirmationApproval(
-                id=uuid.uuid4().hex,
+            return self.record_approval_in_session(
+                session,
                 confirmation_id=confirmation_id,
                 actor_id=actor_id,
                 status=status,
-                sequence=sequence,
                 context_hash=context_hash,
-                created_at=utcnow_iso(),
             )
-            return self.approval_repo.create(session, approval)
+
+    def record_approval_in_session(self, session, *, confirmation_id: str, actor_id: str,
+                                   status: str, context_hash: str | None = None) -> ConfirmationApproval:
+        """Record an approval using a caller-owned database transaction."""
+        if status not in (APPROVAL_GRANTED, APPROVAL_DENIED):
+            raise DualApprovalError(f"invalid approval status: {status!r}")
+        confirmation = self.confirmation_repo.get(session, confirmation_id)
+        if confirmation is None:
+            raise DualApprovalError("unknown confirmation")
+        if confirmation.status != STATUS_PENDING:
+            raise ConfirmationNotPending("confirmation is no longer pending")
+        existing = self.approval_repo.get_by_actor(session, confirmation_id, actor_id)
+        if existing is not None:
+            raise ApprovalAlreadyExists(
+                f"actor {actor_id!r} has already {existing.status.lower()} this confirmation")
+        existing_approvals = self.approval_repo.list_for_confirmation(session, confirmation_id)
+        required = self.required_approvals(confirmation.risk_level)
+        if len(existing_approvals) >= required:
+            # Do not let two operator clicks crowd out the actor-bound primary
+            # approval and then turn a third approval into an accidental quorum.
+            raise ApprovalNotRequired("required approvals are already recorded")
+        approval = ConfirmationApproval(
+            id=uuid.uuid4().hex,
+            confirmation_id=confirmation_id,
+            actor_id=actor_id,
+            status=status,
+            sequence=len(existing_approvals) + 1,
+            context_hash=context_hash,
+            created_at=utcnow_iso(),
+        )
+        return self.approval_repo.create(session, approval)
+
+    def existing_approval_in_session(self, session, *, confirmation_id: str,
+                                    actor_id: str) -> ConfirmationApproval | None:
+        """Return an actor's prior approval without mutating it."""
+        return self.approval_repo.get_by_actor(session, confirmation_id, actor_id)
+
+    def state_in_session(self, session, confirmation: PendingConfirmation) -> tuple[bool, bool]:
+        """Return ``(dispatchable, denied)`` from one consistent DB snapshot."""
+        approvals = self.approval_repo.list_for_confirmation(session, confirmation.id)
+        denied = any(approval.status == APPROVAL_DENIED for approval in approvals)
+        granted = {approval.actor_id for approval in approvals if approval.status == APPROVAL_GRANTED}
+        required = self.required_approvals(confirmation.risk_level)
+        if self.requires_dual_approval(confirmation.risk_level):
+            # Exactly two distinct grants are required. ExecutionService still
+            # binds ordinary approval/dispatch to the requester; explicit
+            # cross-actor review uses its own RBAC gate.
+            dispatchable = len(granted) == required
+        else:
+            dispatchable = len(granted) >= required
+        return (not denied and dispatchable, denied)
 
     def is_dispatchable(self, confirmation: PendingConfirmation) -> bool:
         """Return True if the confirmation has enough approvals to dispatch."""
-        required = self.required_approvals(confirmation.risk_level)
         with transaction(self.session_factory) as session:
-            approvals = self.approval_repo.list_for_confirmation(
-                session, confirmation.id)
-        granted = [a for a in approvals if a.status == APPROVAL_GRANTED]
-        denied = [a for a in approvals if a.status == APPROVAL_DENIED]
-        # Any denial is an immediate block.
-        if denied:
-            return False
-        # Need exactly `required` grants from distinct actors.
-        distinct_actors = {a.actor_id for a in granted}
-        return len(distinct_actors) >= required
+            dispatchable, _denied = self.state_in_session(session, confirmation)
+        return dispatchable
 
     def is_denied(self, confirmation: PendingConfirmation) -> bool:
         """Return True if any approval is a denial."""
         with transaction(self.session_factory) as session:
-            approvals = self.approval_repo.list_for_confirmation(
-                session, confirmation.id)
-        return any(a.status == APPROVAL_DENIED for a in approvals)
+            _dispatchable, denied = self.state_in_session(session, confirmation)
+        return denied
 
     def get_approvals(self, confirmation_id: str) -> list[ConfirmationApproval]:
         """List all approvals for a confirmation."""

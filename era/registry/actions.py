@@ -386,28 +386,32 @@ ACTION_PARAM_SCHEMAS: dict[str, dict[str, Any]] = {
     ActionType.EMAIL_READ.value: {
         "type": "object",
         "properties": {
-            "message_id": {"type": "string"},
-            "limit": {"type": "integer"},
+            "message_id": {"type": "string", "maxLength": 20},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+            "mailbox": {"type": "string", "maxLength": 128},
             "token": {"type": "string"},
             "refresh_token": {"type": "string"},
         },
         "required": [],
+        "additionalProperties": False,
     },
     ActionType.EMAIL_SEARCH.value: {
         "type": "object",
         "properties": {
-            "query": {"type": "string"},
-            "q": {"type": "string"},
-            "limit": {"type": "integer"},
+            "query": {"type": "string", "minLength": 1, "maxLength": 500},
+            "q": {"type": "string", "minLength": 1, "maxLength": 500},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+            "mailbox": {"type": "string", "maxLength": 128},
             "token": {"type": "string"},
             "refresh_token": {"type": "string"},
         },
         "required": ["query"],
+        "additionalProperties": False,
     },
     ActionType.EMAIL_DRAFT.value: {
         "type": "object",
         "properties": {
-            "to": {"type": "string"},
+            "to": {"type": ["string", "array"], "maxItems": 10},
             "subject": {"type": "string"},
             "body": {"type": "string"},
             "token": {"type": "string"},
@@ -418,47 +422,58 @@ ACTION_PARAM_SCHEMAS: dict[str, dict[str, Any]] = {
     ActionType.EMAIL_SEND.value: {
         "type": "object",
         "properties": {
-            "to": {"type": "string"},
-            "subject": {"type": "string"},
-            "body": {"type": "string"},
-            "cc": {"type": "string"},
-            "bcc": {"type": "string"},
+            "to": {"type": ["string", "array"], "maxItems": 10},
+            "subject": {"type": "string", "maxLength": 998},
+            "body": {"type": "string", "maxLength": 102400},
+            "cc": {"type": ["string", "array"], "maxItems": 10},
+            "bcc": {"type": ["string", "array"], "maxItems": 10},
+            "attachments": {"type": "array", "maxItems": 5},
             "token": {"type": "string"},
             "refresh_token": {"type": "string"},
         },
+        # The real SMTP provider requires body; keeping the catalog envelope
+        # permissive preserves graceful StubProvider fallback for offline use.
         "required": ["to"],
+        "additionalProperties": False,
     },
     # whatsapp
     ActionType.WHATSAPP_READ.value: {
         "type": "object",
         "properties": {
-            "limit": {"type": "integer"},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+            "lookback_hours": {"type": "integer", "minimum": 1, "maximum": 24},
             "sender": {"type": "string"},
             "token": {"type": "string"},
         },
         "required": [],
+        "additionalProperties": False,
     },
     ActionType.WHATSAPP_SEND.value: {
         "type": "object",
         "properties": {
-            "to": {"type": "string", "description": "recipient phone number (E.164)"},
-            "message": {"type": "string", "description": "text body"},
-            "text": {"type": "string"},
-            "template": {"type": "string", "description": "template name"},
-            "template_params": {"type": "object"},
+            "to": {"type": ["string", "array"], "maxItems": 10,
+                   "description": "recipient phone number(s), E.164"},
+            "message": {"type": "string", "maxLength": 1000, "description": "text body"},
+            "text": {"type": "string", "maxLength": 1000},
+            "template": {"type": "string", "maxLength": 512, "description": "approved template name"},
+            "template_params": {"type": ["object", "array"]},
+            "language_code": {"type": "string", "maxLength": 32},
+            "media": {"type": "array", "maxItems": 5},
             "token": {"type": "string"},
         },
         "required": ["to"],
+        "additionalProperties": False,
     },
     ActionType.WHATSAPP_REACT.value: {
         "type": "object",
         "properties": {
-            "message_id": {"type": "string"},
-            "emoji": {"type": "string"},
+            "message_id": {"type": "string", "maxLength": 512},
+            "emoji": {"type": "string", "maxLength": 32},
             "to": {"type": "string"},
             "token": {"type": "string"},
         },
-        "required": ["message_id", "emoji"],
+        "required": ["message_id", "emoji", "to"],
+        "additionalProperties": False,
     },
     # booking
     ActionType.BOOKING_SEARCH.value: {
@@ -473,40 +488,56 @@ ACTION_PARAM_SCHEMAS: dict[str, dict[str, Any]] = {
             "payment_token": {"type": "string"},
         },
         "required": ["origin", "destination"],
+        "additionalProperties": False,
     },
     ActionType.BOOKING_HOLD.value: {
         "type": "object",
         "properties": {
             "booking_id": {"type": "string"},
+            "offer_ref": {"type": "string"},
             "trip_id": {"type": "string"},
             "passenger_name": {"type": "string"},
-            "passengers": {"type": "array"},
+            "passengers": {"type": "array", "maxItems": 10},
+            "guests": {"type": "array", "maxItems": 10},
+            "amount_minor": {"type": "integer", "minimum": 1},
+            "currency": {"type": "string", "maxLength": 3},
+            # Legacy simulator input; real provider requires amount_minor.
             "fare": {"type": "number"},
             "service_number": {"type": "string"},
+            "idempotency_key": {"type": "string", "maxLength": 128},
             "token": {"type": "string"},
             "payment_token": {"type": "string"},
         },
         "required": [],
+        "additionalProperties": False,
     },
     ActionType.BOOKING_CONFIRM.value: {
         "type": "object",
         "properties": {
             "booking_id": {"type": "string"},
+            "booking_ref": {"type": "string"},
             "draft_id": {"type": "string"},
+            "hold_ref": {"type": "string"},
+            "payment_ref": {"type": "string"},
+            "idempotency_key": {"type": "string", "maxLength": 128},
             "token": {"type": "string"},
             "payment_token": {"type": "string"},
         },
         "required": [],
+        "additionalProperties": False,
     },
     ActionType.BOOKING_CANCEL.value: {
         "type": "object",
         "properties": {
             "booking_id": {"type": "string"},
-            "reason": {"type": "string"},
+            "booking_ref": {"type": "string"},
+            "reason": {"type": "string", "maxLength": 1000},
+            "idempotency_key": {"type": "string", "maxLength": 128},
             "token": {"type": "string"},
             "payment_token": {"type": "string"},
         },
-        "required": ["booking_id"],
+        "required": [],
+        "additionalProperties": False,
     },
     # fs / photo
     ActionType.FS_LIST.value: {
@@ -587,123 +618,84 @@ ACTION_PARAM_SCHEMAS: dict[str, dict[str, Any]] = {
     # device
     ActionType.DEVICE_SHELL.value: {
         "type": "object",
-        "properties": {
-            "command": {"type": "string"},
-            "pairing_token": {"type": "string"},
-        },
-        "required": ["command"],
+        "properties": {"command": {"type": "string", "maxLength": 512}, "pairing_token": {"type": "string"}},
+        "required": ["command"], "additionalProperties": False,
     },
     ActionType.DEVICE_APP_LAUNCH.value: {
         "type": "object",
-        "properties": {
-            "package": {"type": "string"},
-            "pairing_token": {"type": "string"},
-        },
-        "required": ["package"],
+        "properties": {"package": {"type": "string", "maxLength": 256}, "pairing_token": {"type": "string"}},
+        "required": ["package"], "additionalProperties": False,
     },
     ActionType.DEVICE_UI_CLICK.value: {
         "type": "object",
-        "properties": {
-            "x": {"type": "integer"},
-            "y": {"type": "integer"},
-            "selector": {"type": "string"},
-            "pairing_token": {"type": "string"},
-        },
-        "required": [],
+        "properties": {"x": {"type": "integer", "minimum": 0, "maximum": 4096},
+                       "y": {"type": "integer", "minimum": 0, "maximum": 4096},
+                       "pairing_token": {"type": "string"}},
+        "required": ["x", "y"], "additionalProperties": False,
     },
     ActionType.DEVICE_SCREENSHOT.value: {
-        "type": "object",
-        "properties": {
-            "path": {"type": "string"},
-            "pairing_token": {"type": "string"},
-        },
-        "required": [],
+        "type": "object", "properties": {"path": {"type": "string"}, "pairing_token": {"type": "string"}},
+        "required": [], "additionalProperties": False,
     },
     ActionType.DEVICE_PHOTO_CAPTURE.value: {
-        "type": "object",
-        "properties": {
-            "path": {"type": "string"},
-            "pairing_token": {"type": "string"},
-        },
-        "required": [],
+        "type": "object", "properties": {"path": {"type": "string"}, "pairing_token": {"type": "string"}},
+        "required": [], "additionalProperties": False,
     },
     ActionType.DEVICE_LOCATION.value: {
-        "type": "object",
-        "properties": {
-            "pairing_token": {"type": "string"},
-        },
-        "required": [],
+        "type": "object", "properties": {"pairing_token": {"type": "string"}},
+        "required": [], "additionalProperties": False,
     },
     ActionType.DEVICE_NOTIFICATION.value: {
         "type": "object",
-        "properties": {
-            "title": {"type": "string"},
-            "body": {"type": "string"},
-            "pairing_token": {"type": "string"},
-        },
-        "required": ["title", "body"],
+        "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                       "pairing_token": {"type": "string"}},
+        "required": [], "additionalProperties": False,
     },
     ActionType.DEVICE_CONTACTS.value: {
         "type": "object",
-        "properties": {
-            "query": {"type": "string"},
-            "pairing_token": {"type": "string"},
-        },
-        "required": [],
+        "properties": {"query": {"type": "string", "maxLength": 256},
+                       "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                       "pairing_token": {"type": "string"}},
+        "required": [], "additionalProperties": False,
     },
     ActionType.DEVICE_SMS_READ.value: {
         "type": "object",
-        "properties": {
-            "sender": {"type": "string"},
-            "limit": {"type": "integer"},
-            "pairing_token": {"type": "string"},
-        },
-        "required": [],
+        "properties": {"sender": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                       "pairing_token": {"type": "string"}},
+        "required": [], "additionalProperties": False,
     },
     ActionType.DEVICE_SMS_SEND.value: {
         "type": "object",
-        "properties": {
-            "to": {"type": "string"},
-            "message": {"type": "string"},
-            "pairing_token": {"type": "string"},
-        },
-        "required": ["to", "message"],
+        "properties": {"to": {"type": "string"}, "message": {"type": "string", "maxLength": 1000},
+                       "pairing_token": {"type": "string"}},
+        "required": ["to", "message"], "additionalProperties": False,
     },
     ActionType.DEVICE_INSTALL_APP.value: {
         "type": "object",
-        "properties": {
-            "path": {"type": "string"},
-            "url": {"type": "string"},
-            "pairing_token": {"type": "string"},
-        },
-        "required": [],
+        "properties": {"path": {"type": "string"}, "pairing_token": {"type": "string"}},
+        "required": ["path"], "additionalProperties": False,
     },
     ActionType.DEVICE_UNINSTALL_APP.value: {
         "type": "object",
-        "properties": {
-            "package": {"type": "string"},
-            "pairing_token": {"type": "string"},
-        },
-        "required": ["package"],
+        "properties": {"package": {"type": "string"}, "pairing_token": {"type": "string"}},
+        "required": ["package"], "additionalProperties": False,
     },
     ActionType.DEVICE_SETTINGS_CHANGE.value: {
         "type": "object",
-        "properties": {
-            "setting": {"type": "string"},
-            "value": {"type": "string"},
-            "pairing_token": {"type": "string"},
-        },
-        "required": ["setting", "value"],
+        "properties": {"setting": {"type": "string", "enum": ["wifi", "brightness"]},
+                       "value": {"type": ["string", "integer", "boolean"]},
+                       "pairing_token": {"type": "string"}},
+        "required": ["setting", "value"], "additionalProperties": False,
     },
     ActionType.DEVICE_PAYMENT.value: {
         "type": "object",
-        "properties": {
-            "amount": {"type": "number"},
-            "recipient": {"type": "string"},
-            "currency": {"type": "string"},
-            "pairing_token": {"type": "string"},
-        },
-        "required": ["amount", "recipient"],
+        "properties": {"amount_minor": {"type": "integer", "minimum": 1},
+                       # Legacy spelling accepted only when it is an integer; providers normalize it.
+                       "amount": {"type": "integer", "minimum": 1},
+                       "recipient": {"type": "string", "maxLength": 256},
+                       "currency": {"type": "string", "maxLength": 3},
+                       "pairing_token": {"type": "string"}},
+        "required": ["recipient"], "additionalProperties": False,
     },
     # github
     ActionType.GITHUB_REPO_GET.value: {
@@ -897,12 +889,12 @@ _SPECS: list[ActionSpec] = [
     _spec(ActionType.EMAIL_DRAFT, RiskLevel.MUTATING, "email", ("token", "refresh_token")),
     _spec(ActionType.EMAIL_SEND, RiskLevel.COMMUNICATION, "email", ("token", "refresh_token")),
 
-    # whatsapp
+    # Content/PII fields are redacted by the action-aware audit boundary; these
+    # static secret fields remain credential-specific for catalog compatibility.
     _spec(ActionType.WHATSAPP_READ, RiskLevel.SENSITIVE, "whatsapp", ("token",)),
     _spec(ActionType.WHATSAPP_SEND, RiskLevel.COMMUNICATION, "whatsapp", ("token",)),
     _spec(ActionType.WHATSAPP_REACT, RiskLevel.COMMUNICATION, "whatsapp", ("token",)),
 
-    # booking
     _spec(ActionType.BOOKING_SEARCH, RiskLevel.SENSITIVE, "booking", ("token", "payment_token")),
     _spec(ActionType.BOOKING_HOLD, RiskLevel.MUTATING, "booking", ("token", "payment_token")),
     _spec(ActionType.BOOKING_CONFIRM, RiskLevel.BOOKING, "booking", ("token", "payment_token")),
@@ -920,11 +912,11 @@ _SPECS: list[ActionSpec] = [
     _spec(ActionType.PHOTO_DELETE, RiskLevel.DESTRUCTIVE, "file", ("token",)),
 
     # android device (separate capability boundary: domain == "device")
-    _spec(ActionType.DEVICE_SHELL, RiskLevel.DESTRUCTIVE, "device", ("pairing_token",)),
+    _spec(ActionType.DEVICE_SHELL, RiskLevel.MUTATING, "device", ("pairing_token",)),
     _spec(ActionType.DEVICE_APP_LAUNCH, RiskLevel.MUTATING, "device", ("pairing_token",)),
     _spec(ActionType.DEVICE_UI_CLICK, RiskLevel.MUTATING, "device", ("pairing_token",)),
     _spec(ActionType.DEVICE_SCREENSHOT, RiskLevel.SENSITIVE, "device", ("pairing_token",)),
-    _spec(ActionType.DEVICE_PHOTO_CAPTURE, RiskLevel.SENSITIVE, "device", ("pairing_token",)),
+    _spec(ActionType.DEVICE_PHOTO_CAPTURE, RiskLevel.MUTATING, "device", ("pairing_token",)),
     _spec(ActionType.DEVICE_LOCATION, RiskLevel.SENSITIVE, "device", ("pairing_token",)),
     _spec(ActionType.DEVICE_NOTIFICATION, RiskLevel.SENSITIVE, "device", ("pairing_token",)),
     _spec(ActionType.DEVICE_CONTACTS, RiskLevel.SENSITIVE, "device", ("pairing_token",)),

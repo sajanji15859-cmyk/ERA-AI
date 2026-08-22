@@ -70,7 +70,8 @@ class ExecutionService:
     def __init__(self, *, session_factory, catalog: ActionCatalog, registry: ToolRegistry,
                  permission_engine, audit_service, confirmation_service, policy_service, settings,
                  retry_policy: RetryPolicy | None = None,
-                 circuit_breakers: CircuitBreakerRegistry | None = None):
+                 circuit_breakers: CircuitBreakerRegistry | None = None,
+                 dual_approval_service=None):
         self.session_factory = session_factory
         self.catalog = catalog
         self.registry = registry
@@ -82,6 +83,9 @@ class ExecutionService:
         # Phase 1F reliability layer (provider-agnostic; defaults from settings).
         self.retry_policy = retry_policy or _retry_policy_from_settings(settings)
         self.circuit_breakers = circuit_breakers or _breaker_registry_from_settings(settings)
+        # Optional only for backwards-compatible direct construction in older
+        # tests/extensions. Containers always inject it for production dispatch.
+        self.dual_approval_service = dual_approval_service
         # Phase 4D parallel steps write to the append-only hash chain from
         # multiple threads. Serializing the whole audit record transaction
         # (including its commit) keeps the chain's seq/prev-hash deterministic
@@ -196,7 +200,6 @@ class ExecutionService:
                 return ExecutionResponse(status="denied", decision=Decision(confirmation.decision),
                                          message=reason)
 
-            # Valid: mark used + persist authorization in ONE transaction.
             decision = Decision(confirmation.decision)
             policy_version = confirmation.policy_version
             cid = confirmation.id
@@ -206,10 +209,85 @@ class ExecutionService:
             dispatch_ctx = ctx.model_copy(update={
                 "execution_scope": confirmation.execution_scope or ctx.execution_scope,
             })
-            self.confirmation_service.mark_status(session, confirmation, STATUS_USED)
             _, domain, provider_id, credential_ref = self._meta(
                 confirmation.action_type, dispatch_ctx,
             )
+
+            # FINANCIAL / BOOKING actions cannot consume the single-use
+            # confirmation until two distinct actors have approved. The first
+            # caller still proves actor binding + CONFIRM_STRONG challenge above;
+            # the secondary operator approval is persisted independently.
+            if self._requires_dual_approval(confirmation):
+                if self.dual_approval_service is None:
+                    self.confirmation_service.mark_status(session, confirmation, STATUS_DENIED)
+                    self.audit_service.record(
+                        session, action=action, ctx=dispatch_ctx,
+                        risk_level=confirmation.risk_level, decision=decision,
+                        outcome=Outcome.REJECTED, policy_version=policy_version,
+                        confirmation_id=cid, provider_id=provider_id,
+                        capability_domain=domain, credential_ref=credential_ref,
+                        result="dual approval service unavailable",
+                    )
+                    return ExecutionResponse(status="denied", decision=decision, message="denied")
+                from era.models.confirmation_approval import APPROVAL_GRANTED
+                from era.services.dual_approval import ApprovalAlreadyExists, DualApprovalError
+
+                existing = self.dual_approval_service.existing_approval_in_session(
+                    session, confirmation_id=cid, actor_id=ctx.actor_id,
+                )
+                if existing is None:
+                    try:
+                        self.dual_approval_service.record_approval_in_session(
+                            session,
+                            confirmation_id=cid,
+                            actor_id=ctx.actor_id,
+                            status=APPROVAL_GRANTED,
+                        )
+                    except ApprovalAlreadyExists:
+                        # A concurrent identical approval is harmless; observe
+                        # the durable state below instead of dispatching twice.
+                        pass
+                    except DualApprovalError:
+                        self.confirmation_service.mark_status(session, confirmation, STATUS_DENIED)
+                        self.audit_service.record(
+                            session, action=action, ctx=dispatch_ctx,
+                            risk_level=confirmation.risk_level, decision=decision,
+                            outcome=Outcome.REJECTED, policy_version=policy_version,
+                            confirmation_id=cid, provider_id=provider_id,
+                            capability_domain=domain, credential_ref=credential_ref,
+                            result="dual approval could not be recorded",
+                        )
+                        return ExecutionResponse(status="denied", decision=decision, message="denied")
+
+                dispatchable, denied = self.dual_approval_service.state_in_session(session, confirmation)
+                if denied:
+                    self.confirmation_service.mark_status(session, confirmation, STATUS_DENIED)
+                    self.audit_service.record(
+                        session, action=action, ctx=dispatch_ctx,
+                        risk_level=confirmation.risk_level, decision=decision,
+                        outcome=Outcome.DENIED_BY_USER, policy_version=policy_version,
+                        confirmation_id=cid, provider_id=provider_id,
+                        capability_domain=domain, credential_ref=credential_ref,
+                        result="dual approval denied",
+                    )
+                    return ExecutionResponse(status="denied", decision=decision, message="denied")
+                if not dispatchable:
+                    self.audit_service.record(
+                        session, action=action, ctx=dispatch_ctx,
+                        risk_level=confirmation.risk_level, decision=decision,
+                        outcome=Outcome.PENDING, policy_version=policy_version,
+                        confirmation_id=cid, provider_id=provider_id,
+                        capability_domain=domain, credential_ref=credential_ref,
+                        result="awaiting a distinct secondary approval",
+                    )
+                    return ExecutionResponse(
+                        status="awaiting_approval", decision=decision, confirmation_id=cid,
+                        message="awaiting a distinct secondary approval",
+                    )
+
+            # Valid (and, where applicable, dual-approved): consume the
+            # confirmation and persist authorization in the same transaction.
+            self.confirmation_service.mark_status(session, confirmation, STATUS_USED)
             self.audit_service.record(
                 session, action=action, ctx=dispatch_ctx,
                 risk_level=confirmation.risk_level,
@@ -255,6 +333,12 @@ class ExecutionService:
     def _forbidden(self, action_type: str) -> bool:
         spec = self.catalog.get(action_type)
         return spec is not None and spec.risk_level is RiskLevel.FORBIDDEN
+
+    def _requires_dual_approval(self, confirmation) -> bool:
+        """True for every FINANCIAL/BOOKING confirmation, regardless of wiring."""
+        # Any malformed legacy row still reaches the fail-closed dual branch
+        # rather than silently dispatching because a service was not injected.
+        return confirmation.risk_level in (RiskLevel.FINANCIAL.value, RiskLevel.BOOKING.value)
 
     def _meta(self, action_type: str, ctx: ExecutionContext):
         spec = self.catalog.get(action_type)
@@ -404,11 +488,19 @@ class ExecutionService:
                 timeout_seconds=budget, provider_id=provider.id, stage="validate",
             )
         except ToolError as e:
+            safe_error = redact_sensitive_text(str(e))
+            # Most validate errors describe a bad action and are rejected.
+            # URL/DNS validation can also legitimately discover a transient
+            # outage; preserve that taxonomy so it trips
+            # the provider breaker and remains externally retry-eligible rather
+            # than disguising an outage as malformed caller input.
+            if e.code is ProviderErrorCode.UNAVAILABLE:
+                breaker.record_failure(e.code)
+                return Outcome.FAILED, ActionResult(success=False, summary=safe_error), e.code
             code = e.code if e.code in (
                 ProviderErrorCode.VALIDATION, ProviderErrorCode.FORBIDDEN,
                 ProviderErrorCode.NOT_FOUND, ProviderErrorCode.TIMEOUT,
             ) else ProviderErrorCode.VALIDATION
-            safe_error = redact_sensitive_text(str(e))
             return Outcome.REJECTED, ActionResult(success=False, summary=safe_error), code
 
         # execute (retryable, deadline-aware) ----------------------------------------
@@ -456,12 +548,24 @@ class ExecutionService:
             )
             return Outcome.FAILED, failed, ProviderErrorCode.PROVIDER_ERROR
         except ToolError as e:
-            # Timeouts, retry exhaustion and provider-authored failures are FAILED.
+            # A provider can mark irreversible dispatches as ambiguous. Convert
+            # transport/timeout failures *after execute began* to
+            # SIDE_EFFECT_UNKNOWN and never retry/replay them. Validation is
+            # handled above and therefore cannot be misclassified here.
+            code = e.code
+            ambiguous = getattr(provider, "ambiguous_on_failure_action_types", frozenset())
+            if (action.action_type in ambiguous
+                    and code in {
+                        ProviderErrorCode.UNAVAILABLE,
+                        ProviderErrorCode.TIMEOUT,
+                        ProviderErrorCode.PROVIDER_ERROR,
+                    }):
+                code = ProviderErrorCode.SIDE_EFFECT_UNKNOWN
             # record_failure ignores ineligible codes (AUTH, FORBIDDEN, TIMEOUT,
-            # ...), so authorization/policy failures never trip the breaker.
-            breaker.record_failure(e.code)
+            # SIDE_EFFECT_UNKNOWN, ...), so policy/user failures never trip it.
+            breaker.record_failure(code)
             safe_error = redact_sensitive_text(str(e))
-            return Outcome.FAILED, ActionResult(success=False, summary=safe_error), e.code
+            return Outcome.FAILED, ActionResult(success=False, summary=safe_error), code
         except Exception as e:  # noqa: BLE001
             # INTERNAL is never breaker-eligible, so this is a no-op for the
             # breaker; kept explicit for readability.

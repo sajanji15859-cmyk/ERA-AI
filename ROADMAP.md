@@ -420,3 +420,32 @@ Phase 4E dual-approval and governance guards applied to their
 FINANCIAL/BOOKING/DESTRUCTIVE actions. Cross-process persistent cookies/session
 store remains out of scope (browser state stays ephemeral per run with
 confirmation-pause continuity).
+
+## Phase 5A — Real Provider Integration (delivered)
+
+Phase 5A upgrades ERA to **0.9.0** and replaces opt-in stub action ownership in
+the agent runtime with real provider boundaries:
+
+1. **Web** — DuckDuckGo Instant Answer search, pinned public-HTTPS fetch,
+   redirect revalidation, DNS-rebinding/private-address blocking, bounded text
+   extraction, and atomic workspace downloads with SHA-256 receipts.
+2. **Email** — bounded SMTP delivery plus a separate TLS/read-only IMAP
+   provider. SMTP/IMAP credentials resolve from direct env values or opaque
+   vault references; body and PII content are redacted before audit persistence.
+3. **WhatsApp** — Meta Cloud API text/template/media routing, actor quotas,
+   bounded webhook-backed reads, delivery state, challenge-token verification,
+   and signed webhook POST validation.
+4. **Booking** — official partner API adapter with integer minor units,
+   idempotency keys, hold TTLs, no automatic confirm/cancel retry, and
+   `SIDE_EFFECT_UNKNOWN` quarantine. The execution path now consumes
+   FINANCIAL/BOOKING confirmations only after two distinct approvals.
+5. **Android** — paired ADB provider with localhost-or-TLS network constraints,
+   no-root shell allowlist, workspace-only artifacts/APKs, caps, and a
+   confirmation/dual-approval protected payment companion handoff.
+6. **Graceful degradation** — incomplete provider configuration leaves the
+   corresponding action types with `StubProvider`; `/v1/providers` identifies
+   active real versus stub providers.
+7. **Validation** — 928 offline tests collected/passing (4 opt-in skips),
+   including a 100+-case provider safety matrix; `ruff check era tests` and
+   `git diff --check` clean. No schema migration is required for runtime
+   provider configuration.

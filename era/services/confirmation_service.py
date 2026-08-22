@@ -18,7 +18,7 @@ from era.core.util import utcnow_iso
 from era.models import PendingConfirmation
 from era.repositories.base import ConfirmationRepo
 from era.security.hashing import action_fingerprint, sha256_hex
-from era.security.redaction import redact
+from era.security.redaction import redact, sensitive_fields_for_action
 
 
 class ConfirmationService:
@@ -42,7 +42,10 @@ class ConfirmationService:
         )
         now = utcnow_iso()
         spec = self.catalog.get(action.action_type)
-        secret_fields = spec.secret_fields if spec else frozenset()
+        secret_fields = sensitive_fields_for_action(
+            action.action_type,
+            spec.secret_fields if spec else frozenset(),
+        )
 
         confirmation = PendingConfirmation(
             id=uuid.uuid4().hex,

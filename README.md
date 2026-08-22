@@ -1449,3 +1449,74 @@ plus migration tests for `0007`.
   should run one scheduler worker per DB.
 - Template publishing/versioning is metadata-only; no runtime template
   delegation beyond the catalogued browser action allowlist.
+
+---
+
+## Phase 5A: Real Provider Integration (0.9.0)
+
+Phase 5A connects ERA's existing fail-closed execution boundary to opt-in real
+providers. Providers are registered only when their required configuration is
+present; otherwise `StubProvider` remains responsible for that action type.
+Use `GET /v1/providers` to see the active real/stub split.
+
+### Provider safety boundaries
+
+- **Web** — keyless DuckDuckGo Instant Answer search by default; optional Bing
+  adapter credentials are vault-resolvable. Fetch/download allow public HTTPS
+  only, reject userinfo/credential URLs and private/loopback/link-local IPv4 or
+  IPv6 addresses, validate every redirect, and pin the TCP connection to the
+  address that passed DNS validation. Text fetches are capped; binary artifacts
+  use `web.download`, workspace confinement, atomic write, and SHA-256 receipt.
+- **Email** — SMTP send uses vault/env credential references, recipient/body/
+  attachment caps, and a per-actor hourly send quota. A separate `email-imap`
+  provider offers TLS-only, read-only `email.read` and `email.search` with at
+  most 50 bounded/redacted previews.
+- **WhatsApp** — Meta Cloud API sends bounded text/templates/media, tracks
+  webhook delivery/inbound state, limits messages per actor, and validates
+  Meta webhook challenge + `X-Hub-Signature-256`. Communication actions remain
+  confirmation-gated by the catalog.
+- **Booking** — configured official partner APIs use integer minor currency
+  units and idempotency keys. `booking.confirm`/`booking.cancel` are never
+  transport-retried; an uncertain downstream outcome is
+  `SIDE_EFFECT_UNKNOWN`. BOOKING confirmations cannot dispatch until two
+  distinct actors approve.
+- **Android ADB** — requires an explicitly paired device/token. Network ADB is
+  localhost-only unless TLS-wrapped, shell is limited to `ls`, `cat`, `dumpsys`,
+  and `getprop`, artifacts stay in the workspace, and root commands are
+  rejected. Device remains an admin-only capability domain.
+
+### Configuration
+
+Copy `.env.example` and configure only the provider(s) you intend to enable.
+Credentials may be direct environment values or `vault:<domain>/<name>`
+references; the vault form is preferred. Never put credentials in action URLs
+or source control. Useful activation examples:
+
+```dotenv
+# SMTP send + read-only IMAP
+ERA_EMAIL_SMTP_HOST=smtp.example.com
+ERA_EMAIL_SMTP_USER=vault:email/smtp_user
+ERA_EMAIL_SMTP_PASSWORD=vault:email/smtp_password
+ERA_EMAIL_IMAP_HOST=imap.example.com
+ERA_EMAIL_IMAP_USER=vault:email/smtp_user
+ERA_EMAIL_IMAP_PASSWORD=vault:email/smtp_password
+
+# Meta Cloud API
+ERA_WHATSAPP_PHONE_NUMBER_ID=123456789
+ERA_WHATSAPP_ACCESS_TOKEN=vault:whatsapp/token
+ERA_WHATSAPP_WEBHOOK_VERIFY_TOKEN=vault:whatsapp/webhook_verify
+ERA_WHATSAPP_WEBHOOK_APP_SECRET=vault:whatsapp/app_secret
+
+# Official travel partner (both values required)
+ERA_BOOKING_PARTNER_URL=https://partner.example/api
+ERA_BOOKING_PARTNER_API_KEY=vault:booking/api_key
+
+# Explicit paired ADB device
+ERA_ANDROID_DEVICE_ID=emulator-5554
+ERA_ANDROID_PAIRING_TOKEN=vault:device/pairing_token
+```
+
+Every provider call still travels through `ExecutionService`: authorization and
+append-only audit commit happen before dispatch, normal/strong confirmation
+semantics remain intact, provider results are centrally sanitized, and retry /
+circuit-breaker behavior uses the common error taxonomy.

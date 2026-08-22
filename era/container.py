@@ -170,12 +170,21 @@ def build_container(settings: Settings | None = None,
         store=circuit_store,
     )
 
+    # Dual approval is a dispatch precondition for BOOKING/FINANCIAL actions,
+    # so it must be wired into ExecutionService rather than only exposed to an
+    # operator UI.
+    dual_approval_service = DualApprovalService(
+        session_factory=session_factory,
+        approval_repo=repositories.confirmation_approval,
+        confirmation_repo=repositories.confirmation,
+    )
     execution_service = ExecutionService(
         session_factory=session_factory, catalog=catalog, registry=registry,
         permission_engine=permission_engine, audit_service=audit_service,
         confirmation_service=confirmation_service, policy_service=policy_service,
         settings=settings, retry_policy=retry_policy,
         circuit_breakers=circuit_breakers,
+        dual_approval_service=dual_approval_service,
     )
 
     # Phase 3G: replay-safe sync execution + durable background jobs. Jobs left
@@ -250,12 +259,6 @@ def build_container(settings: Settings | None = None,
         workflow_schedule_service=workflow_schedule_service,
     )
 
-    # Phase 4E: dual-approval service for FINANCIAL/BOOKING confirmations.
-    dual_approval_service = DualApprovalService(
-        session_factory=session_factory,
-        approval_repo=repositories.confirmation_approval,
-        confirmation_repo=repositories.confirmation,
-    )
     # Phase 4E: scheduler leader election for multi-worker coordination.
     scheduler_leader_service = SchedulerLeaderService(
         session_factory=session_factory,

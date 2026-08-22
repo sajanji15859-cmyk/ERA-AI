@@ -8,6 +8,8 @@ work and returns a deterministic canned result.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from era.core.action import Action
 from era.core.context import ExecutionContext
 from era.core.provider_info import ProviderInfo
@@ -21,12 +23,14 @@ class StubProvider:
     #: catalogued action type.
     action_types = frozenset(a.value for a in ActionType)
 
-    def __init__(self, exclude: frozenset[str] = frozenset()):
-        # Phase 3A: real providers withdraw the action types they own by
-        # constructing the stub with ``exclude``; the instance attribute then
-        # shadows the class default. Default construction keeps 1C–1F behaviour.
-        if exclude:
-            self.action_types = frozenset(a.value for a in ActionType) - frozenset(exclude)
+    def __init__(self, exclude: Iterable[str] | None = None):
+        # Real providers withdraw the action types they own by constructing the
+        # stub with an iterable (list/set/frozenset all work). The instance
+        # attribute then shadows the class default. Default construction keeps
+        # legacy all-stub behavior for deliberately offline containers.
+        excluded = frozenset(exclude or ())
+        if excluded:
+            self.action_types = frozenset(a.value for a in ActionType) - excluded
 
     def validate(self, action: Action) -> None:
         # No validation constraints for the stub.
