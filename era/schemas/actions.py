@@ -29,6 +29,13 @@ class ActionRequest(BaseModel):
 
     action_type: str
     params: dict[str, Any] = Field(default_factory=dict)
+    #: Phase 3G: optional client idempotency key. Replaying the same key with
+    #: the same request returns the recorded result instead of re-executing;
+    #: the same key with a different request is a 409.
+    idempotency_key: str | None = None
+    #: Phase 3G: when True, execute in the background and return a job id
+    #: immediately (poll GET /v1/jobs/{id}).
+    async_: bool = Field(default=False, alias="async")
 
     @field_validator("action_type")
     @classmethod
@@ -37,6 +44,18 @@ class ActionRequest(BaseModel):
             return validate_action_type(v)
         except ValidationError_ as e:
             raise ValueError(str(e)) from None
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def _idempotency_key(cls, v: Any) -> str | None:
+        if v is None:
+            return None
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("idempotency_key must be a non-empty string")
+        v = v.strip()
+        if len(v) > 128:
+            raise ValueError("idempotency_key too long")
+        return v
 
     @field_validator("params")
     @classmethod

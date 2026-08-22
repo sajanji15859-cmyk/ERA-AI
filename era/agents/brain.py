@@ -88,7 +88,7 @@ class OfflineBrain:
     @staticmethod
     def _generic_report(subject: str, memory: ShortTermMemory) -> str:
         lines = [f"# {subject.title()} — Report", "",
-                 f"Prepared by the ERA agent (offline mode).", ""]
+                 "Prepared by the ERA agent (offline mode).", ""]
         lines.append("## Summary")
         lines.append(f"This report covers the topic: {subject}.")
         search_notes = [

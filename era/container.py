@@ -30,6 +30,8 @@ from era.services.audit_service import AuditService
 from era.services.auth_service import AuthService
 from era.services.confirmation_service import ConfirmationService
 from era.services.execution_service import ExecutionService
+from era.services.idempotency import IdempotencyService
+from era.services.jobs import JobService
 from era.services.permission_engine import PermissionEngine
 from era.services.policy import PolicyService
 from era.services.vault_service import VaultService
@@ -54,6 +56,10 @@ class Container:
     #: Phase 3C: credential vault. Always built; ``enabled`` is False (and all
     #: store/resolve operations fail closed) unless a master key is set.
     vault_service: VaultService
+    #: Phase 3G: replay-safe synchronous execution (idempotency keys).
+    idempotency_service: IdempotencyService
+    #: Phase 3G: durable background execution (async jobs).
+    job_service: JobService
     #: Phase 3A: agent run lifecycle. ``None`` unless the agent runtime wired
     #: it (``build_agent_container``) — the default container stays unchanged.
     agent_service: AgentService | None = None
@@ -146,6 +152,21 @@ def build_container(settings: Settings | None = None,
         circuit_breakers=circuit_breakers,
     )
 
+    # Phase 3G: replay-safe sync execution + durable background jobs. Jobs left
+    # queued/running by a previous process are failed here (never guessed at).
+    idempotency_service = IdempotencyService(
+        session_factory=session_factory,
+        idempotency_repo=repositories.idempotency,
+        settings=settings,
+    )
+    job_service = JobService(
+        session_factory=session_factory,
+        job_repo=repositories.job,
+        execution_service=execution_service,
+        settings=settings,
+    )
+    job_service.recover()
+
     policy_service.bootstrap()
     auth_service.bootstrap_admin()
 
@@ -165,4 +186,6 @@ def build_container(settings: Settings | None = None,
         auth_service=auth_service,
         execution_service=execution_service,
         vault_service=vault_service,
+        idempotency_service=idempotency_service,
+        job_service=job_service,
     )

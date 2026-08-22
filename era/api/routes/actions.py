@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 
 from era.api.deps import (
     build_ctx,
@@ -18,8 +19,13 @@ from era.schemas.actions import (
     EvaluateResponse,
     ExecutionResponse,
 )
+from era.schemas.jobs import JobOut
 from era.security.exceptions import AuthorizationError
 from era.security.rbac import Permission
+from era.services.idempotency import (
+    IdempotencyError,
+    request_fingerprint,
+)
 
 router = APIRouter()
 
@@ -45,7 +51,12 @@ def evaluate(body: EvaluateRequest, container: Container = Depends(get_container
     )
 
 
-@router.post("/v1/actions/execute", response_model=ExecutionResponse)
+@router.post(
+    "/v1/actions/execute",
+    response_model=ExecutionResponse,
+    responses={202: {"model": JobOut,
+                     "description": "Accepted for background execution (async=true)."}},
+)
 def execute(body: ActionRequest, container: Container = Depends(get_container),
             principal=Depends(get_current_principal)):
     """Execute an action: authenticate -> RBAC authorize -> execution gate.
@@ -63,4 +74,25 @@ def execute(body: ActionRequest, container: Container = Depends(get_container),
                             detail="forbidden: role not allowed for action")
 
     action = Action(action_type=body.action_type, params=body.params)
-    return container.execution_service.request(action, build_ctx(principal))
+    ctx = build_ctx(principal)
+
+    # Phase 3G: background execution — submit and return a job id immediately.
+    if body.async_:
+        try:
+            job = container.job_service.submit(action, ctx, body.idempotency_key)
+        except IdempotencyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return JSONResponse(status_code=202, content=JobOut.from_job(job).model_dump())
+
+    # Phase 3G: replay-safe synchronous execution (idempotency key).
+    if body.idempotency_key:
+        fingerprint = request_fingerprint(action.action_type, action.params)
+        try:
+            return container.idempotency_service.run(
+                ctx.actor_id, body.idempotency_key, fingerprint,
+                lambda: container.execution_service.request(action, ctx),
+            )
+        except IdempotencyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return container.execution_service.request(action, ctx)

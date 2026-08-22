@@ -10,6 +10,8 @@ from era.models import (
     ApiKey,
     AuditLogEntry,
     CircuitBreakerStateRow,
+    IdempotencyRecord,
+    Job,
     MemoryEntry,
     PendingConfirmation,
     PolicyVersion,
@@ -236,6 +238,64 @@ class SQLiteMemoryRepo:
         session.delete(entry)
         session.flush()
         return True
+
+
+class SQLiteIdempotencyRepo:
+    """Replay-dedup storage (Phase 3G)."""
+
+    def create(self, session, record: IdempotencyRecord) -> IdempotencyRecord:
+        session.add(record)
+        session.flush()
+        return record
+
+    def get(self, session, actor_id: str, key_hash: str) -> IdempotencyRecord | None:
+        stmt = select(IdempotencyRecord).where(
+            IdempotencyRecord.actor_id == actor_id,
+            IdempotencyRecord.key_hash == key_hash,
+        )
+        return session.execute(stmt).scalars().first()
+
+    def update(self, session, record: IdempotencyRecord) -> IdempotencyRecord:
+        session.add(record)
+        session.flush()
+        return record
+
+    def delete(self, session, record: IdempotencyRecord) -> None:
+        session.delete(record)
+        session.flush()
+
+
+class SQLiteJobRepo:
+    """Background job storage (Phase 3G)."""
+
+    def create(self, session, job: Job) -> Job:
+        session.add(job)
+        session.flush()
+        return job
+
+    def get(self, session, job_id: str) -> Job | None:
+        return session.get(Job, job_id)
+
+    def get_by_idempotency_key(self, session, actor_id: str, key_hash: str) -> Job | None:
+        stmt = select(Job).where(
+            Job.actor_id == actor_id,
+            Job.idempotency_key_hash == key_hash,
+        )
+        return session.execute(stmt).scalars().first()
+
+    def update(self, session, job: Job) -> Job:
+        session.add(job)
+        session.flush()
+        return job
+
+    def list_by_actor(self, session, actor_id: str, *, limit: int = 50) -> list[Job]:
+        stmt = (select(Job).where(Job.actor_id == actor_id)
+                .order_by(Job.created_at.desc()).limit(limit))
+        return list(session.execute(stmt).scalars().all())
+
+    def list_by_statuses(self, session, statuses: list[str]) -> list[Job]:
+        stmt = select(Job).where(Job.status.in_(statuses))
+        return list(session.execute(stmt).scalars().all())
 
 
 class SQLiteCircuitBreakerStateRepo:

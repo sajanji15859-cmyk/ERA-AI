@@ -12,6 +12,8 @@ from era.repositories.base import (
     AuditRepo,
     CircuitBreakerStateRepo,
     ConfirmationRepo,
+    IdempotencyRepo,
+    JobRepo,
     MemoryRepo,
     PolicyRepo,
     UserRepo,
@@ -33,6 +35,8 @@ class RepositoryBundle:
     agent_run: AgentRunRepo
     memory: MemoryRepo
     circuit_breaker_state: CircuitBreakerStateRepo
+    idempotency: IdempotencyRepo
+    job: JobRepo
     backend: str
 
 
@@ -51,6 +55,8 @@ def build_repositories(
             SQLiteAuditRepo,
             SQLiteCircuitBreakerStateRepo,
             SQLiteConfirmationRepo,
+            SQLiteIdempotencyRepo,
+            SQLiteJobRepo,
             SQLiteMemoryRepo,
             SQLitePolicyRepo,
             SQLiteUserRepo,
@@ -67,6 +73,8 @@ def build_repositories(
             agent_run=SQLiteAgentRunRepo(),
             memory=SQLiteMemoryRepo(),
             circuit_breaker_state=SQLiteCircuitBreakerStateRepo(),
+            idempotency=SQLiteIdempotencyRepo(),
+            job=SQLiteJobRepo(),
             backend="sqlite",
         )
     if backend == "postgresql":
@@ -76,6 +84,8 @@ def build_repositories(
             PostgresAuditRepo,
             PostgresCircuitBreakerStateRepo,
             PostgresConfirmationRepo,
+            PostgresIdempotencyRepo,
+            PostgresJobRepo,
             PostgresMemoryRepo,
             PostgresPolicyRepo,
             PostgresUserRepo,
@@ -92,6 +102,8 @@ def build_repositories(
             agent_run=PostgresAgentRunRepo(),
             memory=PostgresMemoryRepo(),
             circuit_breaker_state=PostgresCircuitBreakerStateRepo(),
+            idempotency=PostgresIdempotencyRepo(),
+            job=PostgresJobRepo(),
             backend="postgresql",
         )
     raise ValueError(

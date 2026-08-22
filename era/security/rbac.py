@@ -43,6 +43,8 @@ class Permission:
     #: Phase 3C: manage provider secrets (store / rotate / revoke).
     #: Admin-only — day-to-day ``user`` roles never touch the vault.
     VAULT_MANAGE = "vault.manage"
+    #: Phase 3G: read the caller's own background job status/results.
+    JOBS_READ = "jobs.read"
 
 
 ALL_PERMISSIONS: frozenset[str] = frozenset({
@@ -57,6 +59,7 @@ ALL_PERMISSIONS: frozenset[str] = frozenset({
     Permission.API_KEYS_MANAGE,
     Permission.AGENT_RUN,
     Permission.VAULT_MANAGE,
+    Permission.JOBS_READ,
 })
 
 ROLE_PERMISSIONS: dict[Role, frozenset[str]] = {
@@ -68,6 +71,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[str]] = {
         Permission.ACTIONS_EXECUTE,
         Permission.ACTIONS_CONFIRM,
         Permission.AGENT_RUN,
+        Permission.JOBS_READ,
     }),
 }
 

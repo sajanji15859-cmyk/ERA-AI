@@ -7,7 +7,6 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from era.agents.models import AgentResult, RunRecord, TaskStatus
-from era.security.validation import ValidationError_, validate_params
 
 MAX_GOAL_LEN = 2000
 
@@ -52,7 +51,7 @@ class AgentRunOut(BaseModel):
     error: str | None = None
 
     @classmethod
-    def from_record(cls, record: RunRecord) -> "AgentRunOut":
+    def from_record(cls, record: RunRecord) -> AgentRunOut:
         return cls(
             run_id=record.run_id,
             goal=record.goal,
