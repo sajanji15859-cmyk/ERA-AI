@@ -20,10 +20,15 @@ def test_browser_settings_defaults_and_version():
     assert settings.browser_viewport_width == 1280
     assert settings.browser_viewport_height == 800
     assert settings.browser_user_agent == (
-        "ERA-Agent/0.8.0 (+https://github.com/sajanji15859-cmyk/ERA-AI)"
+        "ERA-Agent/0.8.1 (+https://github.com/sajanji15859-cmyk/ERA-AI)"
     )
-    assert settings.app_version == "0.8.0"
-    assert __version__ == "0.8.0"
+    assert settings.browser_max_contexts == 32
+    assert settings.browser_context_idle_seconds == 300.0
+    assert settings.browser_command_queue_size == 128
+    assert settings.browser_proxy_server == ""
+    assert settings.provider_result_max_bytes == 524288
+    assert settings.app_version == "0.8.1"
+    assert __version__ == "0.8.1"
 
 
 def test_browser_settings_load_exact_era_environment_names(monkeypatch):
@@ -32,11 +37,21 @@ def test_browser_settings_load_exact_era_environment_names(monkeypatch):
     monkeypatch.setenv("ERA_BROWSER_VIEWPORT_WIDTH", "1440")
     monkeypatch.setenv("ERA_BROWSER_VIEWPORT_HEIGHT", "900")
     monkeypatch.setenv("ERA_BROWSER_USER_AGENT", "ERA-Test-Browser")
+    monkeypatch.setenv("ERA_BROWSER_MAX_CONTEXTS", "7")
+    monkeypatch.setenv("ERA_BROWSER_CONTEXT_IDLE_SECONDS", "45")
+    monkeypatch.setenv("ERA_BROWSER_COMMAND_QUEUE_SIZE", "9")
+    monkeypatch.setenv("ERA_BROWSER_PROXY_SERVER", "http://egress-proxy:8080")
+    monkeypatch.setenv("ERA_PROVIDER_RESULT_MAX_BYTES", "262144")
     settings = Settings()
     assert settings.browser_headless is False
     assert settings.browser_timeout_seconds == 12.5
     assert (settings.browser_viewport_width, settings.browser_viewport_height) == (1440, 900)
     assert settings.browser_user_agent == "ERA-Test-Browser"
+    assert settings.browser_max_contexts == 7
+    assert settings.browser_context_idle_seconds == 45
+    assert settings.browser_command_queue_size == 9
+    assert settings.browser_proxy_server == "http://egress-proxy:8080"
+    assert settings.provider_result_max_bytes == 262144
 
 
 def test_build_browser_provider_applies_settings_without_starting_chromium(tmp_path):
@@ -46,6 +61,10 @@ def test_build_browser_provider_applies_settings_without_starting_chromium(tmp_p
         browser_viewport_width=1024,
         browser_viewport_height=768,
         browser_user_agent="ERA-Custom",
+        browser_max_contexts=5,
+        browser_context_idle_seconds=20,
+        browser_command_queue_size=11,
+        browser_proxy_server="http://proxy:3128",
     )
     provider = build_browser_provider(settings, tmp_path)
     assert provider.timeout_seconds == 9.5
@@ -53,6 +72,10 @@ def test_build_browser_provider_applies_settings_without_starting_chromium(tmp_p
     assert provider.viewport_height == 768
     assert provider.user_agent == "ERA-Custom"
     assert isinstance(provider.transport, PlaywrightBrowserTransport)
+    assert provider.transport.max_contexts == 5
+    assert provider.transport.context_idle_seconds == 20
+    assert provider.transport._commands.maxsize == 11
+    assert provider.transport.proxy_server == "http://proxy:3128"
     assert provider.transport._thread is None
     provider.close()
 

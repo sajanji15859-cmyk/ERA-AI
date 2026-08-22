@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     provider_retry_max_backoff_seconds: float = 2.0
     #: Backoff growth factor between attempts.
     provider_retry_backoff_factor: float = 2.0
+    #: Maximum JSON-encoded provider result returned/persisted after centralized
+    #: secret redaction and structural validation.
+    provider_result_max_bytes: int = 524288
     #: Consecutive eligible provider failures that open the circuit.
     circuit_breaker_failure_threshold: int = 5
     #: How long an OPEN circuit blocks dispatch before a HALF_OPEN probe.
@@ -93,8 +96,14 @@ class Settings(BaseSettings):
     browser_viewport_width: int = 1280
     browser_viewport_height: int = 800
     browser_user_agent: str = (
-        "ERA-Agent/0.8.0 (+https://github.com/sajanji15859-cmyk/ERA-AI)"
+        "ERA-Agent/0.8.1 (+https://github.com/sajanji15859-cmyk/ERA-AI)"
     )
+    browser_max_contexts: int = 32
+    browser_context_idle_seconds: float = 300.0
+    browser_command_queue_size: int = 128
+    #: Optional mandatory-egress proxy for production browser workers. Keep
+    #: credentials outside this URL and configure them at the proxy boundary.
+    browser_proxy_server: str = ""
 
     # --- Phase 3C: credential vault + provider secrets -----------------------
     #: Master key for the credential vault: 32 bytes as 64 hex chars or 44
@@ -160,7 +169,7 @@ class Settings(BaseSettings):
     booking_partner_url: str = ""
     booking_timeout_seconds: float = 15.0
 
-    app_version: str = "0.8.0"
+    app_version: str = "0.8.1"
 
     # Note: a missing/malformed policy is always DENY-all (hard fail-closed).
     # This is intentionally not configurable — weakening it is a footgun.

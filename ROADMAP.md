@@ -203,3 +203,42 @@ wired into `build_agent_container`.
 The repository baseline collected 600 tests (599 passed + one optional live
 PostgreSQL skip). Phase 4A adds **52 tests**; current result is **651 passed, 1
 skipped (652 collected)**, with `ruff check .` clean.
+
+---
+
+## § Phase 4A.1 — Browser Security & Reliability Hardening (implemented)
+
+Before moving to wider browser workflows, ERA closes the state and side-effect
+ambiguities identified after Phase 4A:
+
+1. **True run isolation:** `ExecutionContext.execution_scope` is derived by the
+   server from `run_id`; confirmation revision `0005` preserves it across
+   approval requests; terminal runs clean up their ephemeral contexts.
+2. **No duplicate interactions:** click/fill/submit opt out of provider retries
+   and agent verification retries. Timeout after dispatch is classified as
+   `SIDE_EFFECT_UNKNOWN` and quarantines the context.
+3. **Cancellable bounded worker:** absolute command deadlines, pre-dispatch
+   cancellation, bounded queue, active-context cap and idle reaping.
+4. **Secret-safe input:** agent fills use owner-bound
+   `vault:browser/<name>` references. Direct plaintext fill is redacted, while
+   raw agent-plan fill values are erased and denied before persistence.
+5. **Safe result boundary:** all providers now receive centralized JSON/type,
+   size and recursive token/key redaction before results can reach responses,
+   observations, jobs or idempotency storage.
+6. **Egress controls:** optional operator-controlled browser proxy plus Chromium
+   QUIC/non-proxied-WebRTC restrictions; application SSRF routing remains
+   defense-in-depth, not a replacement for production network namespaces.
+7. **Real-browser CI hook:** an opt-in `browser` pytest marker exercises actual
+   Playwright navigation, rendered DOM and screenshots when Chromium/network
+   are available; default CI remains binary-free.
+
+Version: **0.8.1**. Validation: **683 passed, 2 optional skips, 685 collected**;
+`ruff check .` clean. The suite grew by **33 collected cases** over Phase 4A.
+
+### Recommended next phase
+
+With these P0 hardening items complete, proceed to **Phase 4B — Reliable Browser
+Workflows**: accessibility-tree element handles, tabs/popups, downloads,
+iframes/shadow DOM, post-condition receipts and resumable login workflows.
+Keep payments and irreversible transactions outside autonomous operation until
+a dedicated strong-confirmation and idempotency design is delivered.

@@ -46,8 +46,11 @@ class ProviderErrorCode(StrEnum):
     NOT_FOUND = "NOT_FOUND"
     #: The downstream provider reported a conflict / precondition failure.
     CONFLICT = "CONFLICT"
-    #: The provider exceeded its execution deadline.
+    #: The provider exceeded its execution deadline before a side effect began.
     TIMEOUT = "TIMEOUT"
+    #: A mutating operation timed out after dispatch began, so its side-effect
+    #: outcome cannot safely be inferred or retried.
+    SIDE_EFFECT_UNKNOWN = "SIDE_EFFECT_UNKNOWN"
     #: The downstream provider is rate-limiting / temporarily unavailable.
     UNAVAILABLE = "UNAVAILABLE"
     #: The provider is offline / not configured (stub-only phases, disabled).

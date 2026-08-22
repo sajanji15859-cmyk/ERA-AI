@@ -50,6 +50,7 @@ from era.core.action import Action
 from era.core.context import ExecutionContext
 from era.core.enums import RiskLevel
 from era.core.result import ToolError
+from era.security.redaction import REDACTED
 
 ApprovalChoice = Literal["approve", "deny", "wait"]
 ApprovalHandler = Callable[[Action, Any], ApprovalChoice]
@@ -102,6 +103,7 @@ class AgentLoop:
         memory = ShortTermMemory(goal=goal)
         if plan is None:
             plan = self.planner.plan(goal)
+        self._harden_browser_fill_tasks(plan)
         self._emit(AgentEventType.PLAN_CREATED, summary=plan.summary,
                    task_count=len(plan.tasks), created_by=plan.created_by)
         memory.remember("actor_id", ctx.actor_id)
@@ -114,6 +116,10 @@ class AgentLoop:
         """Resume a paused run after confirmation resolutions."""
         self._emit(AgentEventType.RUN_STARTED, goal=previous.goal, resumed=True)
         plan = previous.plan
+        self._harden_browser_fill_tasks(plan)
+        for previous_task in previous.tasks:
+            if previous_task.action_type == "browser.fill" and "text" in previous_task.params:
+                previous_task.params["text"] = REDACTED
         memory = ShortTermMemory(goal=previous.goal)
         memory.rebuild_from_tasks(previous.tasks)
         memory.remember("actor_id", ctx.actor_id)
@@ -195,7 +201,7 @@ class AgentLoop:
                 continue
 
             # -- tool-selection gate (fail closed, final — never retried) ------
-            gate_reason = self._gate_reject(calls[0].action_type)
+            gate_reason = self._gate_reject(calls[0].action_type, calls[0].params)
             if gate_reason is not None:
                 tm.fail(task, gate_reason)
                 tm.record_observation(task, _obs(task.id, calls[0].action_type,
@@ -284,7 +290,11 @@ class AgentLoop:
                 continue
 
             # -- failure → retry (bounded) or fail + replan ----------------------
-            if tm.retry_allowed(task):
+            # A successfully dispatched click/fill/submit may already have had
+            # its side effect even when post-condition verification fails.
+            # Provider-declared non-retryable actions are therefore never
+            # automatically repeated by the agent loop.
+            if tm.retry_allowed(task) and self._automatic_retry_allowed(task.action_type):
                 tm.retry(task, verdict.reason)
                 self._emit(AgentEventType.TASK_RETRYING, task_id=task.id,
                            reason=verdict.reason, attempt=task.attempt)
@@ -308,7 +318,16 @@ class AgentLoop:
         return self._final(goal, ctx, plan, tm, memory, RunStatus.COMPLETED)
 
     # -- helpers -----------------------------------------------------------------
-    def _gate_reject(self, action_type: str) -> str | None:
+    @staticmethod
+    def _harden_browser_fill_tasks(plan: Plan) -> None:
+        """Ensure raw browser input values never enter persisted agent state."""
+
+        for task in plan.tasks:
+            if task.action_type == "browser.fill" and "text" in task.params:
+                task.params["text"] = REDACTED
+
+    def _gate_reject(self, action_type: str,
+                     params: dict[str, Any] | None = None) -> str | None:
         """Return a rejection reason, or None if the call may proceed."""
         spec = self.execution_service.catalog.get(action_type)
         if spec is None:
@@ -319,7 +338,14 @@ class AgentLoop:
             return f"no provider registered for {action_type}"
         if self.domain_guard is not None and not self.domain_guard(action_type):
             return f"action not allowed for this role: {action_type}"
+        if action_type == "browser.fill" and isinstance((params or {}).get("text"), str):
+            return "agent browser.fill requires a vault-backed value_ref"
         return None
+
+    def _automatic_retry_allowed(self, action_type: str) -> bool:
+        provider = self.execution_service.registry.get(action_type)
+        no_retry = getattr(provider, "non_retryable_action_types", frozenset())
+        return action_type not in no_retry
 
     def _event_params(self, action_type: str, params: dict[str, Any]) -> dict[str, Any]:
         spec = self.execution_service.catalog.get(action_type)

@@ -42,6 +42,7 @@ from era.db import transaction
 from era.models import AgentRun
 from era.models.confirmation import STATUS_DENIED, STATUS_EXPIRED, STATUS_USED
 from era.security.rbac import role_domain_allowed
+from era.security.result_safety import redact_sensitive_text
 
 MAX_GOAL_LEN = 2000
 MAX_BUFFERED_RUNS = 100
@@ -84,9 +85,15 @@ class AgentService:
                   approval_handler: Callable | None = None) -> RunRecord:
         goal = self._validate_goal(goal)
         run_id = uuid.uuid4().hex
-        loop = self._new_loop(run_id, ctx, role, approval_handler, emit=None)
-        record = loop.run(goal, ctx)
-        self._persist(run_id, ctx, record)
+        run_ctx = self._run_context(ctx, run_id)
+        try:
+            loop = self._new_loop(run_id, run_ctx, role, approval_handler, emit=None)
+            record = loop.run(goal, run_ctx)
+            self._persist(run_id, run_ctx, record)
+        except BaseException:
+            self._close_run_context(run_ctx)
+            raise
+        self._close_if_terminal(record, run_ctx)
         return record
 
     def continue_run(self, run_id: str, ctx: ExecutionContext, *, role: str = "user",
@@ -95,16 +102,23 @@ class AgentService:
         if row is None or row.actor_id != ctx.actor_id:
             return None
         record = self._record_from_row(row)
+        run_ctx = self._run_context(ctx, run_id)
         if record.status is not RunStatus.WAITING_FOR_USER:
+            self._close_if_terminal(record, run_ctx)
             return record  # idempotent: nothing to continue
 
         resolutions = self._resolve_confirmations(record.pending_confirmations)
         if not resolutions:
             return record  # still waiting for the operator
 
-        loop = self._new_loop(run_id, ctx, role, approval_handler, emit=None)
-        record = loop.resume(record, ctx, resolutions)
-        self._persist(run_id, ctx, record)
+        try:
+            loop = self._new_loop(run_id, run_ctx, role, approval_handler, emit=None)
+            record = loop.resume(record, run_ctx, resolutions)
+            self._persist(run_id, run_ctx, record)
+        except BaseException:
+            self._close_run_context(run_ctx)
+            raise
+        self._close_if_terminal(record, run_ctx)
         return record
 
     # -- streaming (Phase 3B) ------------------------------------------------------
@@ -113,11 +127,17 @@ class AgentService:
         """Start a run, yielding its events live (SSE-ready)."""
         goal = self._validate_goal(goal)
         run_id = uuid.uuid4().hex
+        run_ctx = self._run_context(ctx, run_id)
 
         def run_fn(emit):
-            loop = self._new_loop(run_id, ctx, role, approval_handler, emit=emit)
-            record = loop.run(goal, ctx)
-            self._persist(run_id, ctx, record)
+            try:
+                loop = self._new_loop(run_id, run_ctx, role, approval_handler, emit=emit)
+                record = loop.run(goal, run_ctx)
+                self._persist(run_id, run_ctx, record)
+            except BaseException:
+                self._close_run_context(run_ctx)
+                raise
+            self._close_if_terminal(record, run_ctx)
             return record
 
         yield from self._stream(run_id, run_fn)
@@ -131,7 +151,9 @@ class AgentService:
                              data={"message": "agent run not found"})
             return
         record = self._record_from_row(row)
+        run_ctx = self._run_context(ctx, run_id)
         if record.status is not RunStatus.WAITING_FOR_USER:
+            self._close_if_terminal(record, run_ctx)
             yield self._final_event(record, len(self._events_of(run_id)))
             return
         resolutions = self._resolve_confirmations(record.pending_confirmations)
@@ -140,9 +162,14 @@ class AgentService:
             return
 
         def run_fn(emit):
-            loop = self._new_loop(run_id, ctx, role, None, emit=emit)
-            resumed = loop.resume(record, ctx, resolutions)
-            self._persist(run_id, ctx, resumed)
+            try:
+                loop = self._new_loop(run_id, run_ctx, role, None, emit=emit)
+                resumed = loop.resume(record, run_ctx, resolutions)
+                self._persist(run_id, run_ctx, resumed)
+            except BaseException:
+                self._close_run_context(run_ctx)
+                raise
+            self._close_if_terminal(resumed, run_ctx)
             return resumed
 
         yield from self._stream(run_id, run_fn)
@@ -180,8 +207,11 @@ class AgentService:
             try:
                 run_fn(sink)
             except Exception as exc:  # noqa: BLE001 — surface as an error event
-                q.put(AgentEvent(run_id=run_id, seq=0, type=AgentEventType.ERROR,
-                                 data={"message": f"agent run failed: {type(exc).__name__}: {exc}"}))
+                detail = redact_sensitive_text(str(exc))
+                q.put(AgentEvent(
+                    run_id=run_id, seq=0, type=AgentEventType.ERROR,
+                    data={"message": f"agent run failed: {type(exc).__name__}: {detail}"},
+                ))
             finally:
                 q.put(None)  # sentinel
 
@@ -343,6 +373,33 @@ class AgentService:
             return role_domain_allowed(role, spec.capability_domain)
 
         return guard
+
+    # -- stateful-provider scope lifecycle -------------------------------------------
+    @staticmethod
+    def _run_context(ctx: ExecutionContext, run_id: str) -> ExecutionContext:
+        """Return a server-derived context isolated to exactly one agent run."""
+
+        return ctx.model_copy(update={"execution_scope": f"agent:{run_id}"})
+
+    def _close_if_terminal(self, record: RunRecord, ctx: ExecutionContext) -> None:
+        if record.status is not RunStatus.WAITING_FOR_USER:
+            self._close_run_context(ctx)
+
+    def _close_run_context(self, ctx: ExecutionContext) -> None:
+        """Best-effort disposal of stateful provider data for one run.
+
+        Cleanup may never turn a successfully persisted run into a failure, but
+        the browser provider itself closes the entire context fail-closed.
+        """
+
+        provider = self.execution_service.registry.get("browser.navigate")
+        close_context = getattr(provider, "close_context", None)
+        if not callable(close_context):
+            return
+        try:
+            close_context(ctx)
+        except Exception:  # noqa: BLE001,S110 - cleanup must not corrupt run state
+            pass
 
     # -- helpers -----------------------------------------------------------------------
     @staticmethod

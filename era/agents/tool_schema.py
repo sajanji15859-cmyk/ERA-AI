@@ -33,7 +33,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "browser.screenshot": "Save a page or element screenshot inside the workspace.",
     "browser.extract_dom": "Extract readable text, Markdown and links from a dynamic page.",
     "browser.click": "Click one page element by CSS selector or visible text (approval-gated).",
-    "browser.fill": "Fill an input field in the current page (approval-gated).",
+    "browser.fill": (
+        "Fill an input field (approval-gated). Agents must use vault:browser/<name> value_ref."
+    ),
     "browser.submit": "Submit a form in the current page (approval-gated).",
     "fs.list": "List files and directories inside the sandboxed workspace.",
     "fs.read": "Read a workspace file (text).",

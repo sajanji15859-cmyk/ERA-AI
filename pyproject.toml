@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "era-ai"
-version = "0.8.0"
+version = "0.8.1"
 description = "ERA AI — secure autonomous agent with self-hosted browser automation and audited tools"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -46,6 +46,7 @@ pythonpath = ["."]
 addopts = "-q"
 markers = [
     "postgres: requires ERA_TEST_POSTGRES_URL pointing to a disposable PostgreSQL database",
+    "browser: opt-in real Playwright Chromium and public-network E2E tests",
 ]
 
 [tool.ruff]

@@ -19,7 +19,7 @@ def test_migration_upgrade_downgrade_round_trip(tmp_path):
     with engine.connect() as connection:
         tables = set(inspect(connection).get_table_names())
         revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar()
-    assert revision == "0004_phase_3h_schedules"
+    assert revision == "0005_phase_4a1_browser_hardening"
     assert "circuit_breaker_state" in tables
     assert "idempotency_record" in tables
     assert "job" in tables
@@ -58,7 +58,7 @@ def test_pre_alembic_database_is_stamped_and_upgraded_without_data_loss(tmp_path
             "SELECT version FROM policy_version WHERE changed_by = 'legacy'"
         )).scalar()
         tables = set(inspect(connection).get_table_names())
-    assert revision == "0004_phase_3h_schedules"
+    assert revision == "0005_phase_4a1_browser_hardening"
     assert version == 7
     assert "circuit_breaker_state" in tables
     assert "schedule" in tables

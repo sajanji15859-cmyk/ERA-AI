@@ -96,7 +96,8 @@ class VaultService:
 
     # -- management ----------------------------------------------------------
     def store_or_rotate_secret(self, *, domain: str, name: str, value: str,
-                               actor_id: str) -> VaultSecret:
+                               actor_id: str,
+                               owner_user_id: str | None = None) -> VaultSecret:
         """Create a new secret, or rotate an existing (active or revoked) one.
 
         Returns the metadata row — the plaintext ``value`` is not returned,
@@ -104,6 +105,10 @@ class VaultService:
         """
         domain = validate_vault_part(domain, "domain")
         name = validate_vault_part(name, "name")
+        owner_was_explicit = owner_user_id is not None
+        owner_user_id = owner_user_id or actor_id
+        if not isinstance(owner_user_id, str) or not owner_user_id:
+            raise VaultError("owner_user_id must be non-empty", code="validation")
         if not isinstance(value, str) or not value:
             raise VaultError("value must be a non-empty string", code="validation")
         if len(value) > MAX_VAULT_VALUE_LENGTH:
@@ -119,7 +124,7 @@ class VaultService:
                     id=uuid.uuid4().hex,
                     domain=domain,
                     name=name,
-                    owner_user_id=actor_id,
+                    owner_user_id=owner_user_id,
                     ciphertext=ciphertext,
                     nonce=nonce,
                     value_length=len(value),
@@ -130,6 +135,8 @@ class VaultService:
             else:
                 existing.ciphertext = ciphertext
                 existing.nonce = nonce
+                if owner_was_explicit:
+                    existing.owner_user_id = owner_user_id
                 existing.value_length = len(value)
                 existing.revision = (existing.revision or 1) + 1
                 existing.revoked_at = None  # re-store revives a revoked row
@@ -173,7 +180,8 @@ class VaultService:
             return self.vault_repo.list(session, domain)
 
     # -- resolution (providers only) -------------------------------------------
-    def resolve_ref(self, ref: str, *, actor_id: str = SYSTEM_ACTOR) -> str:
+    def resolve_ref(self, ref: str, *, actor_id: str = SYSTEM_ACTOR,
+                    require_owner: bool = False) -> str:
         """Resolve a ``vault:<domain>/<name>`` reference to its plaintext.
 
         Intended for providers at execution time. Every call — success or
@@ -197,6 +205,11 @@ class VaultService:
                             error_code="UNKNOWN")
                 raise VaultError(f"unknown vault secret: {domain}/{name}",
                                  code="unknown")
+            if require_owner and secret.owner_user_id != actor_id:
+                self._audit(op="vault.resolve", domain=domain, name=name,
+                            actor_id=actor_id, outcome=Outcome.FAILED,
+                            error_code="AUTH")
+                raise VaultError("vault secret belongs to another actor", code="auth")
             if secret.revoked_at is not None:
                 self._audit(op="vault.resolve", domain=domain, name=name,
                             actor_id=actor_id, outcome=Outcome.FAILED,
@@ -232,7 +245,10 @@ class VaultRefResolver:
     def attach(self, vault_service) -> None:
         self._vault_service = vault_service
 
-    def resolve_ref(self, ref: str, *, actor_id: str = SYSTEM_ACTOR) -> str:
+    def resolve_ref(self, ref: str, *, actor_id: str = SYSTEM_ACTOR,
+                    require_owner: bool = False) -> str:
         if self._vault_service is None:
             raise VaultError("vault resolver is not attached", code="disabled")
-        return self._vault_service.resolve_ref(ref, actor_id=actor_id)
+        return self._vault_service.resolve_ref(
+            ref, actor_id=actor_id, require_owner=require_owner,
+        )

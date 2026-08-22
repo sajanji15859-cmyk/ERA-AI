@@ -134,6 +134,7 @@ EXPECTED_SECRETS: dict[str, frozenset[str]] = {
     "booking.hold": frozenset({"token", "payment_token"}),
     "booking.confirm": frozenset({"token", "payment_token"}),
     "booking.cancel": frozenset({"token", "payment_token"}),
+    "browser.fill": frozenset({"text"}),
     "image.generate": frozenset({"api_key"}),
     "fs.read": frozenset({"token"}),
     "fs.write": frozenset({"token"}),

@@ -214,8 +214,18 @@ ACTION_PARAM_SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {
             "selector": {"type": "string", "minLength": 1, "maxLength": 1000},
             "text": {"type": "string", "maxLength": 2000},
+            "value_ref": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256,
+                "description": "vault:browser/<name> reference for secret input",
+            },
         },
-        "required": ["selector", "text"],
+        "required": ["selector"],
+        "oneOf": [
+            {"required": ["text"], "not": {"required": ["value_ref"]}},
+            {"required": ["value_ref"], "not": {"required": ["text"]}},
+        ],
         "additionalProperties": False,
     },
     ActionType.BROWSER_SUBMIT.value: {
@@ -717,7 +727,7 @@ _SPECS: list[ActionSpec] = [
     _spec(ActionType.BROWSER_SCREENSHOT, RiskLevel.SENSITIVE, "browser"),
     _spec(ActionType.BROWSER_EXTRACT_DOM, RiskLevel.SAFE, "browser"),
     _spec(ActionType.BROWSER_CLICK, RiskLevel.MUTATING, "browser"),
-    _spec(ActionType.BROWSER_FILL, RiskLevel.MUTATING, "browser"),
+    _spec(ActionType.BROWSER_FILL, RiskLevel.MUTATING, "browser", ("text",)),
     _spec(ActionType.BROWSER_SUBMIT, RiskLevel.MUTATING, "browser"),
 
     # email

@@ -78,7 +78,8 @@ def build_llm_provider(settings: Settings, vault_service=None):
 
 
 def build_browser_provider(settings: Settings, workspace_root: Path,
-                           transport: BrowserTransport | None = None) -> BrowserProvider:
+                           transport: BrowserTransport | None = None,
+                           secret_resolver: VaultRefResolver | None = None) -> BrowserProvider:
     """Build the self-hosted Playwright browser provider (Phase 4A).
 
     The Playwright package/Chromium process is loaded lazily on first browser
@@ -93,6 +94,11 @@ def build_browser_provider(settings: Settings, workspace_root: Path,
         viewport_width=int(settings.browser_viewport_width),
         viewport_height=int(settings.browser_viewport_height),
         user_agent=settings.browser_user_agent,
+        max_contexts=int(settings.browser_max_contexts),
+        context_idle_seconds=float(settings.browser_context_idle_seconds),
+        command_queue_size=int(settings.browser_command_queue_size),
+        proxy_server=settings.browser_proxy_server,
+        secret_resolver=secret_resolver,
     )
 
 
@@ -194,10 +200,12 @@ def build_agent_container(settings: Settings | None = None) -> Container:
                       timeout_seconds=float(settings.web_timeout_seconds),
                       user_agent=settings.web_user_agent,
                       workspace_root=workspace_root)
-    browser = build_browser_provider(settings, workspace_root)
 
     # Phase 3C, 3D, 3H & 4A: provider secrets and real providers.
     vault_resolver = VaultRefResolver()
+    browser = build_browser_provider(
+        settings, workspace_root, secret_resolver=vault_resolver,
+    )
     email = build_email_provider(settings, vault_resolver)
     github = build_github_provider(settings, vault_resolver)
     code_exec = build_code_exec_provider(settings, workspace_root)

@@ -20,6 +20,11 @@ class CredentialScope(BaseModel):
 class ExecutionContext(BaseModel):
     actor_id: str
     session_id: str | None = None
+    #: Internal execution scope. AgentService sets this to ``agent:<run_id>``
+    #: so stateful providers isolate concurrent runs even when they share the
+    #: same authenticated API-key session. It is server-derived and is never
+    #: accepted from action request bodies.
+    execution_scope: str | None = None
     credentials: CredentialScope = Field(default_factory=CredentialScope)
     #: Optional absolute deadline for the *provider dispatch* phase (Phase 1E),
     #: as a :func:`time.monotonic` timestamp. ``None`` means no cooperative

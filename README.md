@@ -909,3 +909,97 @@ Phase 4A adds **52 tests** (provider contract, SSRF/private DNS, workspace and
 symlink escapes, DOM/Markdown/links, interaction validation, actor/session
 isolation, confirmation+audit flow, planner, verifier, settings and runtime
 wiring). Total: **652 collected**.
+
+---
+
+## Phase 4A.1: Browser Security & Reliability Hardening (delivered)
+
+ERA AI `0.8.1` hardens stateful browser workflows before the next major
+capability phase.
+
+### Run-scoped lifecycle and approval continuity
+
+- `AgentService` derives an internal `agent:<run_id>` execution scope. Browser
+  contexts no longer share state merely because two runs used the same API key.
+- The scope is persisted on `PendingConfirmation` by Alembic revision
+  `0005_phase_4a1_browser_hardening`. An approval arriving through a later HTTP
+  request resumes the exact browser context that requested it.
+- Waiting runs retain their context; completed, failed and budget-exhausted runs
+  discard it. Exceptions also trigger best-effort fail-closed cleanup.
+- Chromium enforces a maximum active-context count and reaps idle contexts.
+
+### Side-effect and timeout safety
+
+- `browser.click`, `browser.fill` and `browser.submit` declare themselves
+  non-retryable. `ExecutionService` forces one transport attempt even when a
+  transient provider code would normally be retried.
+- Agent post-condition failures cannot automatically repeat these actions.
+- Playwright commands carry absolute deadlines and cancellation flags. Expired
+  queued commands are rejected before dispatch, and the command queue is
+  bounded.
+- A mutating operation that times out after dispatch returns
+  `SIDE_EFFECT_UNKNOWN`, is never retried and quarantines its browser context.
+- Browser's internal timeout reserves margin inside ERA's outer provider
+  deadline, preventing abandoned timeout threads from routinely outliving the
+  dispatch budget.
+
+### Vault-backed browser input
+
+Agents must use `value_ref: "vault:browser/<name>"` for `browser.fill`.
+Plaintext `text` remains available to direct API callers but is treated as a
+secret field and redacted from confirmation/audit/event surfaces. Raw fill text
+proposed inside an agent plan is erased and rejected before dispatch or
+persistence. Browser vault resolution is owner-bound, so one actor cannot use
+another actor's stored browser credential. Vault admins can set
+`owner_user_id` when storing the secret for its intended existing user.
+
+```json
+{
+  "action_type": "browser.fill",
+  "params": {
+    "selector": "#password",
+    "value_ref": "vault:browser/login_password"
+  }
+}
+```
+
+### Central provider-result boundary
+
+Every provider result now passes through one runtime boundary before it reaches
+an API response, agent observation, idempotency row or job row:
+
+- recursive secret-key and unmistakable token-pattern redaction;
+- JSON-compatible type, finite-number, depth, key and collection validation;
+- a configurable encoded size cap (`ERA_PROVIDER_RESULT_MAX_BYTES`);
+- unsafe output fails once after invocation and is never placed in a retry loop.
+
+### Additional browser worker controls
+
+```dotenv
+ERA_BROWSER_MAX_CONTEXTS=32
+ERA_BROWSER_CONTEXT_IDLE_SECONDS=300.0
+ERA_BROWSER_COMMAND_QUEUE_SIZE=128
+ERA_BROWSER_PROXY_SERVER=
+ERA_PROVIDER_RESULT_MAX_BYTES=524288
+```
+
+Production deployments should set `ERA_BROWSER_PROXY_SERVER` to a
+credential-free, default-deny egress proxy and enforce private/metadata network
+drops at the container/network-namespace layer. Chromium also disables QUIC,
+non-proxied WebRTC UDP, service workers and page WebSockets.
+
+### Tests
+
+```bash
+pytest          # 683 passed, 2 skipped, 685 collected
+ruff check .    # clean
+```
+
+Phase 4A.1 contributes **33 additional collected cases** (30 in dedicated new
+test files plus expanded error-taxonomy and vault-owner API coverage). The two
+skips are the existing opt-in live PostgreSQL test and the new opt-in real Chromium smoke
+test. Run the latter after installing Chromium:
+
+```bash
+ERA_TEST_BROWSER=1 pytest -m browser tests/test_browser_playwright_e2e.py
+```

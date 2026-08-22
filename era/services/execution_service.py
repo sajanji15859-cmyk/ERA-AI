@@ -26,6 +26,7 @@ directly invokable by routes or the agent loop.
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 
 from era.core.action import Action
 from era.core.circuit_breaker import CircuitBreakerConfig, CircuitBreakerRegistry
@@ -38,6 +39,11 @@ from era.core.tool_registry import ActionCatalog, ToolRegistry
 from era.db import transaction
 from era.models.confirmation import STATUS_DENIED, STATUS_EXPIRED, STATUS_USED
 from era.schemas.actions import ExecutionResponse
+from era.security.result_safety import (
+    UnsafeResultError,
+    redact_sensitive_text,
+    sanitize_action_result,
+)
 from era.security.validation import ValidationError_, validate_param_schema, validate_params
 
 
@@ -182,17 +188,26 @@ class ExecutionService:
             decision = Decision(confirmation.decision)
             policy_version = confirmation.policy_version
             cid = confirmation.id
+            # Restore the server-derived stateful-provider scope that initiated
+            # the confirmation. The approving HTTP request has its own API-key
+            # session, but browser dispatch must resume the original agent run.
+            dispatch_ctx = ctx.model_copy(update={
+                "execution_scope": confirmation.execution_scope or ctx.execution_scope,
+            })
             self.confirmation_service.mark_status(session, confirmation, STATUS_USED)
-            _, domain, provider_id, credential_ref = self._meta(confirmation.action_type, ctx)
+            _, domain, provider_id, credential_ref = self._meta(
+                confirmation.action_type, dispatch_ctx,
+            )
             self.audit_service.record(
-                session, action=action, ctx=ctx, risk_level=confirmation.risk_level,
+                session, action=action, ctx=dispatch_ctx,
+                risk_level=confirmation.risk_level,
                 decision=decision, outcome=Outcome.AUTHORIZED,
                 policy_version=policy_version, confirmation_id=cid,
                 provider_id=provider_id, capability_domain=domain, credential_ref=credential_ref,
             )
 
         # Dispatch OUTSIDE the transaction, then record the result.
-        return self._dispatch_and_record(action, ctx, decision, policy_version, cid)
+        return self._dispatch_and_record(action, dispatch_ctx, decision, policy_version, cid)
 
     def deny(self, confirmation_id: str, ctx: ExecutionContext) -> ExecutionResponse:
         with transaction(self.session_factory) as session:
@@ -254,9 +269,11 @@ class ExecutionService:
                 session, action=action, risk_level=risk_level,
                 decision=decision, policy_version=policy_version,
             )
-            # Phase 2A: bind the confirmation to the initiating actor so only
-            # that actor (or an admin) can approve/deny it.
+            # Bind identity and the server-derived provider scope. Actor binding
+            # controls who may approve; scope binding restores the exact
+            # stateful browser context after an out-of-band approval.
             confirmation.actor_id = ctx.actor_id
+            confirmation.execution_scope = ctx.execution_scope
             self.confirmation_service.confirmation_repo.update(session, confirmation)
             cid = confirmation.id
             self.audit_service.record(
@@ -298,6 +315,14 @@ class ExecutionService:
 
     def _timeout_budget(self) -> float:
         return float(getattr(self.settings, "provider_timeout_seconds", 0.0) or 0.0)
+
+    def _retry_policy_for(self, provider, action_type: str) -> RetryPolicy:
+        """Disable transport retries for provider-declared side effects."""
+
+        no_retry = getattr(provider, "non_retryable_action_types", frozenset())
+        if action_type in no_retry and self.retry_policy.max_attempts != 1:
+            return replace(self.retry_policy, max_attempts=1)
+        return self.retry_policy
 
     def _dispatch_context(self, ctx: ExecutionContext) -> ExecutionContext:
         """Return a context advertising an absolute monotonic deadline."""
@@ -370,7 +395,8 @@ class ExecutionService:
                 ProviderErrorCode.VALIDATION, ProviderErrorCode.FORBIDDEN,
                 ProviderErrorCode.NOT_FOUND, ProviderErrorCode.TIMEOUT,
             ) else ProviderErrorCode.VALIDATION
-            return Outcome.REJECTED, ActionResult(success=False, summary=str(e)), code
+            safe_error = redact_sensitive_text(str(e))
+            return Outcome.REJECTED, ActionResult(success=False, summary=safe_error), code
 
         # execute (retryable, deadline-aware) ----------------------------------------
         # with_retry only retries explicitly retryable codes (UNAVAILABLE /
@@ -378,15 +404,33 @@ class ExecutionService:
         # additionally bounded by the same hard wall-clock timeout as Phase 1E
         # — a timeout can never cause an unbounded retry loop.
         try:
+            retry_policy = self._retry_policy_for(provider, action.action_type)
             result = run_with_timeout(
                 lambda: with_retry(
                     lambda: provider.execute(action, dispatch_ctx),
-                    policy=self.retry_policy,
+                    policy=retry_policy,
                     deadline=dispatch_ctx.deadline,
                     provider_id=provider.id,
                 ),
                 timeout_seconds=budget, provider_id=provider.id, stage="execute",
             )
+            try:
+                result = sanitize_action_result(
+                    result,
+                    max_bytes=int(getattr(
+                        self.settings, "provider_result_max_bytes", 524_288,
+                    )),
+                )
+            except UnsafeResultError:
+                # Result sanitization is after provider invocation and never
+                # enters the retry loop: a mutating side effect may already
+                # have happened, and unsafe output must not be surfaced.
+                breaker.record_failure(ProviderErrorCode.INTERNAL)
+                return (
+                    Outcome.FAILED,
+                    ActionResult(success=False, summary="provider returned an unsafe result"),
+                    ProviderErrorCode.INTERNAL,
+                )
             if result.success:
                 breaker.record_success()
                 return Outcome.EXECUTED, result, None
@@ -403,7 +447,8 @@ class ExecutionService:
             # record_failure ignores ineligible codes (AUTH, FORBIDDEN, TIMEOUT,
             # ...), so authorization/policy failures never trip the breaker.
             breaker.record_failure(e.code)
-            return Outcome.FAILED, ActionResult(success=False, summary=str(e)), e.code
+            safe_error = redact_sensitive_text(str(e))
+            return Outcome.FAILED, ActionResult(success=False, summary=safe_error), e.code
         except Exception as e:  # noqa: BLE001
             # INTERNAL is never breaker-eligible, so this is a no-op for the
             # breaker; kept explicit for readability.

@@ -28,6 +28,7 @@ import hashlib
 import queue
 import re
 import threading
+import time
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from pathlib import Path
@@ -41,16 +42,28 @@ from era.core.result import ActionResult, ProviderErrorCode, ToolError
 from era.registry.actions import ActionType
 from era.security.path_safety import WorkspaceRoot
 from era.security.url_safety import validate_public_url
+from era.security.vault import VaultError, is_vault_ref, parse_vault_ref
 
 DEFAULT_TIMEOUT_SECONDS = 30.0
 DEFAULT_VIEWPORT_WIDTH = 1280
 DEFAULT_VIEWPORT_HEIGHT = 800
-DEFAULT_USER_AGENT = "ERA-Agent/0.8.0 (+https://github.com/sajanji15859-cmyk/ERA-AI)"
+DEFAULT_USER_AGENT = "ERA-Agent/0.8.1 (+https://github.com/sajanji15859-cmyk/ERA-AI)"
 MAX_DOM_CHARS = 100_000
 DEFAULT_DOM_CHARS = 50_000
 MAX_DOM_SOURCE_CHARS = 2_000_000
 MAX_SCREENSHOT_BYTES = 20 * 1024 * 1024
 MAX_LINKS = 200
+DEFAULT_MAX_CONTEXTS = 32
+DEFAULT_CONTEXT_IDLE_SECONDS = 300.0
+DEFAULT_COMMAND_QUEUE_SIZE = 128
+_DISPATCH_SAFETY_MARGIN_SECONDS = 0.25
+
+_NON_RETRYABLE_ACTION_TYPES = frozenset({
+    ActionType.BROWSER_CLICK.value,
+    ActionType.BROWSER_FILL.value,
+    ActionType.BROWSER_SUBMIT.value,
+})
+_NON_RETRYABLE_OPERATIONS = frozenset({"click", "fill", "submit"})
 
 _ACTION_TYPES = frozenset({
     ActionType.BROWSER_NAVIGATE.value,
@@ -213,6 +226,15 @@ class _BrowserCommand:
     session_key: str
     kwargs: dict[str, Any]
     response: queue.Queue[tuple[bool, Any]]
+    deadline: float
+    cancelled: threading.Event = field(default_factory=threading.Event)
+
+
+@dataclass
+class _PlaywrightSession:
+    context: Any
+    page: Any
+    last_used: float
 
 
 class PlaywrightBrowserTransport:
@@ -228,18 +250,41 @@ class PlaywrightBrowserTransport:
     def __init__(self, *, headless: bool = True,
                  viewport_width: int = DEFAULT_VIEWPORT_WIDTH,
                  viewport_height: int = DEFAULT_VIEWPORT_HEIGHT,
-                 user_agent: str = DEFAULT_USER_AGENT):
+                 user_agent: str = DEFAULT_USER_AGENT,
+                 max_contexts: int = DEFAULT_MAX_CONTEXTS,
+                 context_idle_seconds: float = DEFAULT_CONTEXT_IDLE_SECONDS,
+                 command_queue_size: int = DEFAULT_COMMAND_QUEUE_SIZE,
+                 proxy_server: str = ""):
+        if int(max_contexts) < 1:
+            raise ValueError("browser max_contexts must be positive")
+        if float(context_idle_seconds) <= 0:
+            raise ValueError("browser context_idle_seconds must be positive")
+        if int(command_queue_size) < 1:
+            raise ValueError("browser command_queue_size must be positive")
+        proxy_server = proxy_server.strip()
+        if proxy_server:
+            proxy = urlsplit(proxy_server)
+            if proxy.scheme not in {"http", "https", "socks5"} or not proxy.hostname:
+                raise ValueError("browser proxy_server must be an HTTP(S) or SOCKS5 URL")
+            if proxy.username is not None or proxy.password is not None:
+                raise ValueError("browser proxy credentials must not be embedded in the URL")
         self.headless = bool(headless)
         self.viewport_width = int(viewport_width)
         self.viewport_height = int(viewport_height)
         self.user_agent = user_agent
-        self._commands: queue.Queue[_BrowserCommand | None] = queue.Queue()
+        self.max_contexts = int(max_contexts)
+        self.context_idle_seconds = float(context_idle_seconds)
+        self.proxy_server = proxy_server
+        self._commands: queue.Queue[_BrowserCommand | None] = queue.Queue(
+            maxsize=int(command_queue_size),
+        )
         self._start_lock = threading.Lock()
         self._thread: threading.Thread | None = None
+        self._stop = threading.Event()
         self._closed = False
         self._playwright = None
         self._browser = None
-        self._contexts: dict[str, tuple[Any, Any]] = {}
+        self._contexts: dict[str, _PlaywrightSession] = {}
 
     def navigate(self, session_key: str, url: str, *, wait_until: str,
                  timeout_ms: int) -> dict[str, Any]:
@@ -281,10 +326,14 @@ class PlaywrightBrowserTransport:
             if self._closed:
                 return
             self._closed = True
+            self._stop.set()
             thread = self._thread
             if thread is None:
                 return
-            self._commands.put(None)
+            try:
+                self._commands.put_nowait(None)
+            except queue.Full:
+                pass  # worker observes _stop after the in-flight command
         thread.join(timeout=5.0)
 
     def _ensure_started(self) -> None:
@@ -301,31 +350,76 @@ class PlaywrightBrowserTransport:
     def _call(self, operation: str, session_key: str, *, timeout_ms: int,
               **kwargs: Any) -> Any:
         self._ensure_started()
+        timeout_seconds = max(0.001, timeout_ms / 1000)
+        deadline = time.monotonic() + timeout_seconds
         response: queue.Queue[tuple[bool, Any]] = queue.Queue(maxsize=1)
         kwargs["timeout_ms"] = timeout_ms
-        self._commands.put(_BrowserCommand(operation, session_key, kwargs, response))
+        command = _BrowserCommand(
+            operation, session_key, kwargs, response, deadline=deadline,
+        )
         try:
-            ok, value = response.get(timeout=max(0.1, timeout_ms / 1000 + 1.0))
+            self._commands.put(command, timeout=timeout_seconds)
+        except queue.Full as exc:
+            command.cancelled.set()
+            raise ToolError("browser command queue is full", provider_id="browser",
+                            code=ProviderErrorCode.UNAVAILABLE) from exc
+        remaining = max(0.001, deadline - time.monotonic())
+        try:
+            # Small grace lets the worker report its own deadline classification
+            # while the provider's outer dispatch deadline remains authoritative.
+            ok, value = response.get(timeout=remaining + 0.05)
         except queue.Empty as exc:
+            command.cancelled.set()
+            code = (
+                ProviderErrorCode.SIDE_EFFECT_UNKNOWN
+                if operation in _NON_RETRYABLE_OPERATIONS
+                else ProviderErrorCode.TIMEOUT
+            )
             raise ToolError("browser operation timed out", provider_id="browser",
-                            code=ProviderErrorCode.TIMEOUT) from exc
+                            code=code) from exc
         if ok:
             return value
         raise _transport_error(value)
 
     def _worker(self) -> None:
-        while True:
-            command = self._commands.get()
+        poll_seconds = min(1.0, self.context_idle_seconds)
+        while not self._stop.is_set():
+            try:
+                command = self._commands.get(timeout=poll_seconds)
+            except queue.Empty:
+                self._reap_idle_contexts()
+                continue
             if command is None:
-                self._shutdown_runtime()
-                return
+                break
+            if command.cancelled.is_set() or time.monotonic() >= command.deadline:
+                command.response.put((False, ToolError(
+                    "browser command expired before dispatch",
+                    provider_id="browser", code=ProviderErrorCode.TIMEOUT,
+                )))
+                continue
             try:
                 self._ensure_runtime()
                 value = self._dispatch(command)
-            except BaseException as exc:  # noqa: BLE001 - returned to the dispatch thread
-                command.response.put((False, exc))
+            except BaseException as exc:  # noqa: BLE001 - returned to dispatch thread
+                error = self._command_error(command, exc)
+                command.response.put((False, error))
             else:
-                command.response.put((True, value))
+                if command.operation in _NON_RETRYABLE_OPERATIONS and (
+                    command.cancelled.is_set() or time.monotonic() >= command.deadline
+                ):
+                    self._close_session(command.session_key)
+                    command.response.put((False, ToolError(
+                        "browser interaction outcome is unknown after timeout",
+                        provider_id="browser",
+                        code=ProviderErrorCode.SIDE_EFFECT_UNKNOWN,
+                    )))
+                else:
+                    command.response.put((True, value))
+            session = self._contexts.get(command.session_key)
+            if session is not None:
+                session.last_used = time.monotonic()
+            self._reap_idle_contexts()
+        self._shutdown_runtime()
 
     def _ensure_runtime(self) -> None:
         if self._browser is not None:
@@ -338,12 +432,28 @@ class PlaywrightBrowserTransport:
                 provider_id="browser", code=ProviderErrorCode.NOT_IMPLEMENTED,
             ) from exc
         self._playwright = sync_playwright().start()
-        self._browser = self._playwright.chromium.launch(headless=self.headless)
+        launch_options: dict[str, Any] = {
+            "headless": self.headless,
+            "args": [
+                "--disable-quic",
+                "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+            ],
+        }
+        if self.proxy_server:
+            launch_options["proxy"] = {"server": self.proxy_server}
+        self._browser = self._playwright.chromium.launch(**launch_options)
 
     def _context_page(self, session_key: str) -> tuple[Any, Any]:
-        pair = self._contexts.get(session_key)
-        if pair is not None:
-            return pair
+        session = self._contexts.get(session_key)
+        if session is not None:
+            session.last_used = time.monotonic()
+            return session.context, session.page
+        self._reap_idle_contexts()
+        if len(self._contexts) >= self.max_contexts:
+            raise ToolError(
+                "browser context limit reached",
+                provider_id="browser", code=ProviderErrorCode.UNAVAILABLE,
+            )
         context = self._browser.new_context(
             viewport={"width": self.viewport_width, "height": self.viewport_height},
             user_agent=self.user_agent,
@@ -352,14 +462,15 @@ class PlaywrightBrowserTransport:
         )
         context.route("**/*", self._guard_route)
         # WebSocket handshakes have historically bypassed regular request
-        # routing.  Disable them in every document rather than risk private
-        # network access through a page script.
+        # routing. Disable them rather than risk private-network access.
         context.add_init_script(
             "Object.defineProperty(window, 'WebSocket', {value: class {"
             "constructor(){throw new Error('WebSocket blocked by ERA policy')}}});"
         )
         page = context.new_page()
-        self._contexts[session_key] = (context, page)
+        self._contexts[session_key] = _PlaywrightSession(
+            context=context, page=page, last_used=time.monotonic(),
+        )
         return context, page
 
     @staticmethod
@@ -374,14 +485,15 @@ class PlaywrightBrowserTransport:
     def _dispatch(self, command: _BrowserCommand) -> Any:
         operation = command.operation
         if operation == "close_context":
-            pair = self._contexts.pop(command.session_key, None)
-            if pair is not None:
-                pair[0].close()
+            session = self._contexts.pop(command.session_key, None)
+            if session is not None:
+                session.context.close()
             return None
 
         _, page = self._context_page(command.session_key)
         kwargs = command.kwargs
-        timeout_ms = int(kwargs.get("timeout_ms", 30_000))
+        remaining_ms = max(1, int((command.deadline - time.monotonic()) * 1000))
+        timeout_ms = min(int(kwargs.get("timeout_ms", 30_000)), remaining_ms)
         page.set_default_timeout(timeout_ms)
         page.set_default_navigation_timeout(timeout_ms)
 
@@ -448,12 +560,42 @@ class PlaywrightBrowserTransport:
         if page.url and page.url != "about:blank":
             guard_browser_request(page.url)
 
+    def _command_error(self, command: _BrowserCommand, exc: BaseException) -> ToolError:
+        error = _transport_error(exc)
+        if command.operation in _NON_RETRYABLE_OPERATIONS \
+                and error.code is ProviderErrorCode.TIMEOUT:
+            # Chromium may have delivered the interaction before its wait timed
+            # out. Never report a clean TIMEOUT (which implies no side effect),
+            # and quarantine all resulting page/cookie state.
+            self._close_session(command.session_key)
+            return ToolError(
+                "browser interaction outcome is unknown after timeout",
+                provider_id="browser",
+                code=ProviderErrorCode.SIDE_EFFECT_UNKNOWN,
+            )
+        return error
+
+    def _close_session(self, session_key: str) -> None:
+        session = self._contexts.pop(session_key, None)
+        if session is None:
+            return
+        try:
+            session.context.close()
+        except Exception:  # noqa: BLE001,S110 - fail-closed cleanup
+            pass
+
+    def _reap_idle_contexts(self) -> None:
+        cutoff = time.monotonic() - self.context_idle_seconds
+        expired = [
+            key for key, session in self._contexts.items()
+            if session.last_used <= cutoff
+        ]
+        for key in expired:
+            self._close_session(key)
+
     def _shutdown_runtime(self) -> None:
-        for context, _ in list(self._contexts.values()):
-            try:
-                context.close()
-            except Exception:  # noqa: BLE001,S110 - best-effort process shutdown
-                pass
+        for key in list(self._contexts):
+            self._close_session(key)
         self._contexts.clear()
         if self._browser is not None:
             try:
@@ -489,6 +631,9 @@ class BrowserProvider:
 
     id = "browser"
     action_types = _ACTION_TYPES
+    # ExecutionService and AgentLoop both consult this declaration. Transport
+    # errors or failed post-condition checks must never repeat these effects.
+    non_retryable_action_types = _NON_RETRYABLE_ACTION_TYPES
 
     def __init__(self, *, workspace_root: str | Path,
                  transport: BrowserTransport | None = None,
@@ -496,7 +641,12 @@ class BrowserProvider:
                  timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
                  viewport_width: int = DEFAULT_VIEWPORT_WIDTH,
                  viewport_height: int = DEFAULT_VIEWPORT_HEIGHT,
-                 user_agent: str = DEFAULT_USER_AGENT):
+                 user_agent: str = DEFAULT_USER_AGENT,
+                 max_contexts: int = DEFAULT_MAX_CONTEXTS,
+                 context_idle_seconds: float = DEFAULT_CONTEXT_IDLE_SECONDS,
+                 command_queue_size: int = DEFAULT_COMMAND_QUEUE_SIZE,
+                 proxy_server: str = "",
+                 secret_resolver: Any | None = None):
         if float(timeout_seconds) <= 0:
             raise ValueError("browser timeout_seconds must be positive")
         if int(viewport_width) <= 0 or int(viewport_height) <= 0:
@@ -509,11 +659,16 @@ class BrowserProvider:
         self.viewport_height = int(viewport_height)
         self.user_agent = user_agent
         self.headless = bool(headless)
+        self._secret_resolver = secret_resolver
         self.transport = transport or PlaywrightBrowserTransport(
             headless=self.headless,
             viewport_width=self.viewport_width,
             viewport_height=self.viewport_height,
             user_agent=self.user_agent,
+            max_contexts=max_contexts,
+            context_idle_seconds=context_idle_seconds,
+            command_queue_size=command_queue_size,
+            proxy_server=proxy_server,
         )
 
     def validate(self, action: Action) -> None:
@@ -574,9 +729,26 @@ class BrowserProvider:
 
         if action_type == ActionType.BROWSER_FILL.value:
             _required_string(params, "selector", self.id)
-            if not isinstance(params.get("text"), str):
-                raise ToolError("'text' is required for browser.fill", provider_id=self.id,
+            text = params.get("text")
+            value_ref = params.get("value_ref")
+            if (text is None) == (value_ref is None):
+                raise ToolError(
+                    "browser.fill requires exactly one of text or value_ref",
+                    provider_id=self.id, code=ProviderErrorCode.VALIDATION,
+                )
+            if text is not None and not isinstance(text, str):
+                raise ToolError("browser.fill text must be a string", provider_id=self.id,
                                 code=ProviderErrorCode.VALIDATION)
+            if value_ref is not None:
+                if not is_vault_ref(value_ref):
+                    raise ToolError("browser.fill value_ref must be a vault reference",
+                                    provider_id=self.id,
+                                    code=ProviderErrorCode.VALIDATION)
+                parsed = parse_vault_ref(value_ref)
+                if parsed is None or parsed[0] != "browser":
+                    raise ToolError("browser.fill value_ref must use the browser vault domain",
+                                    provider_id=self.id,
+                                    code=ProviderErrorCode.VALIDATION)
             return
 
         if action_type == ActionType.BROWSER_SUBMIT.value:
@@ -588,7 +760,14 @@ class BrowserProvider:
         self.validate(action)
         params = action.params or {}
         session_key = self._session_key(ctx)
-        timeout_ms = max(1, int(self.timeout_seconds * 1000))
+        timeout_seconds = self.timeout_seconds
+        if ctx.deadline is not None:
+            remaining = ctx.deadline - time.monotonic() - _DISPATCH_SAFETY_MARGIN_SECONDS
+            if remaining <= 0:
+                raise ToolError("browser dispatch deadline exhausted", provider_id=self.id,
+                                code=ProviderErrorCode.TIMEOUT)
+            timeout_seconds = min(timeout_seconds, remaining)
+        timeout_ms = max(1, int(timeout_seconds * 1000))
         action_type = action.action_type
 
         try:
@@ -652,9 +831,10 @@ class BrowserProvider:
                                     data=_public_page_metadata(data))
 
             if action_type == ActionType.BROWSER_FILL.value:
+                fill_text = self._resolve_fill_text(params, ctx)
                 data = self.transport.fill(
                     session_key, selector=str(params["selector"]),
-                    text=str(params["text"]), timeout_ms=timeout_ms,
+                    text=fill_text, timeout_ms=timeout_ms,
                 )
                 return ActionResult(success=True, summary="filled browser input",
                                     data=_public_page_metadata(data))
@@ -668,6 +848,13 @@ class BrowserProvider:
         except ToolError:
             raise
         except TimeoutError as exc:
+            if action_type in self.non_retryable_action_types:
+                self.close_context(ctx)
+                raise ToolError(
+                    "browser interaction outcome is unknown after timeout",
+                    provider_id=self.id,
+                    code=ProviderErrorCode.SIDE_EFFECT_UNKNOWN,
+                ) from exc
             raise _transport_error(exc) from exc
         except OSError as exc:
             raise ToolError("browser workspace write failed", provider_id=self.id,
@@ -677,6 +864,27 @@ class BrowserProvider:
 
         raise ToolError(f"browser cannot handle {action_type}", provider_id=self.id,
                         code=ProviderErrorCode.NOT_IMPLEMENTED)
+
+    def _resolve_fill_text(self, params: dict[str, Any], ctx: ExecutionContext) -> str:
+        text = params.get("text")
+        if isinstance(text, str):
+            return text
+        value_ref = str(params.get("value_ref", ""))
+        if self._secret_resolver is None \
+                or not hasattr(self._secret_resolver, "resolve_ref"):
+            raise ToolError("browser vault resolver is unavailable", provider_id=self.id,
+                            code=ProviderErrorCode.AUTH)
+        try:
+            resolved = self._secret_resolver.resolve_ref(
+                value_ref, actor_id=ctx.actor_id, require_owner=True,
+            )
+        except VaultError as exc:
+            raise ToolError("browser fill credential could not be resolved",
+                            provider_id=self.id, code=ProviderErrorCode.AUTH) from exc
+        if not isinstance(resolved, str):
+            raise ToolError("browser fill credential resolved to an invalid value",
+                            provider_id=self.id, code=ProviderErrorCode.AUTH)
+        return resolved
 
     def close_context(self, ctx: ExecutionContext) -> None:
         """Discard one actor/session's ephemeral cookies and page state."""
@@ -692,7 +900,7 @@ class BrowserProvider:
         return ProviderInfo(
             id=self.id,
             action_types=self.action_types,
-            version="0.8.0",
+            version="0.8.1",
             display_name="Browser (self-hosted Playwright Chromium)",
             is_stub=False,
             capabilities=(
@@ -746,8 +954,8 @@ class BrowserProvider:
     @staticmethod
     def _session_key(ctx: ExecutionContext) -> str:
         actor = ctx.actor_id or "anonymous"
-        session = ctx.session_id or "default"
-        material = f"{len(actor)}:{actor}|{len(session)}:{session}".encode()
+        scope = ctx.execution_scope or ctx.session_id or "default"
+        material = f"{len(actor)}:{actor}|{len(scope)}:{scope}".encode()
         return hashlib.sha256(material).hexdigest()
 
 

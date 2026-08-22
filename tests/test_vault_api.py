@@ -98,6 +98,36 @@ def test_store_list_revoke_flow(api):
     assert ei.value.code == "revoked"
 
 
+def test_admin_can_assign_browser_secret_to_intended_user(api):
+    client, p = api
+    owner_id = p["user"]["user"].id
+    response = client.post(
+        "/v1/vault/secrets",
+        headers=_h(p, "admin"),
+        json={
+            "domain": "browser",
+            "name": "login_password",
+            "value": "not-returned",
+            "owner_user_id": owner_id,
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["owner_user_id"] == owner_id
+    assert "not-returned" not in response.text
+
+    missing = client.post(
+        "/v1/vault/secrets",
+        headers=_h(p, "admin"),
+        json={
+            "domain": "browser",
+            "name": "ghost",
+            "value": "x",
+            "owner_user_id": "missing-user",
+        },
+    )
+    assert missing.status_code == 404
+
+
 def test_store_rejects_bad_input(api):
     client, p = api
     cases = (
